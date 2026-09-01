@@ -57,6 +57,13 @@ on:
         required: false
         type: string
         default: dom, curl, libxml, mbstring, zip, pdo, sqlite3, pdo_sqlite
+      static-analysis-script:
+        description: >-
+          The composer script running the static analyser. Empty skips the job —
+          for a package that genuinely has none, not as a way to silence it.
+        required: false
+        type: string
+        default: larastan
 
 # THE GROUP CARRIES THIS BODY'S NAME, and that is not decoration. In a called
 # workflow `github.workflow` is the CALLER's name, so two bodies invoked by the
@@ -251,6 +258,46 @@ jobs:
           name: coverage-cobertura
           path: coverage.xml
           retention-days: 1
+
+  # A separate job rather than a step in `test`: it needs no matrix, no database
+  # and no coverage driver, so it answers in seconds instead of waiting behind
+  # them — and it is the check most likely to be required on its own.
+  static-analysis:
+    name: Larastan
+    if: inputs.static-analysis-script != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # 2.37.2
+        with:
+          php-version: ${{ inputs.coverage-php }}
+          extensions: ${{ inputs.extensions }}
+          coverage: none
+
+      - name: Cache Composer downloads
+        uses: actions/cache@v6
+        with:
+          path: ~/.composer/cache/files
+          key: ${{ runner.os }}-composer-analysis-${{ hashFiles('composer.json') }}
+          restore-keys: |
+            ${{ runner.os }}-composer-analysis-
+
+      - name: Install Composer dependencies
+        run: composer update --prefer-dist --no-progress
+
+      # Fails loudly when the script is missing rather than passing on nothing:
+      # a green static-analysis check that analysed nothing is worse than none.
+      - name: Static analysis
+        env:
+          SCRIPT: ${{ inputs.static-analysis-script }}
+        run: composer "$SCRIPT"
 
   lint:
     name: Pint
