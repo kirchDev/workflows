@@ -1,0 +1,164 @@
+# yaml-language-server: $schema=https://json.schemastore.org/github-workflow.json
+
+name: CI Check (reusable)
+
+# Reusable body for the Node repos whose CI is a set of independent checks.
+# The caller carries the `pull_request` trigger. See README → CI for the stub.
+#
+# ONE JOB, ONE STEP PER TASK — not one step running them all, and not one job
+# per task either.
+#
+# Collapsing everything into `pnpm check` would cost the run overview: a red
+# build stops saying WHICH check failed. Each task therefore gets its own
+# `::group::` and its own error line.
+#
+# Fanning the tasks out over a MATRIX was the other candidate, and loses here on
+# arithmetic. Jobs share nothing — separate runner, separate filesystem,
+# separate `node_modules` — so n jobs mean n checkouts and n installs. For these
+# repos a whole run takes one to two minutes and is mostly setup, so starting
+# four runners to parallelise four ten-second tasks makes the run slower and
+# burns four runners instead of one. The matrix earns its overhead where a
+# single task runs for minutes (the Laravel and Go bodies) and where one aspect
+# should be a required check on its own. Not here.
+#
+# THE TASK LIST IS DERIVED FROM THE GATE SCRIPT, not configured. Every repo
+# already declares its checks in `package.json`, in order:
+#
+#   meta            "check": "pnpm lint && pnpm format && pnpm typecheck && pnpm validate"
+#   this repo       "check": "pnpm lint && pnpm format && pnpm typecheck && pnpm check:policy"
+#   skills          "verify": "pnpm check && pnpm skills:check && pnpm typecheck && pnpm test"
+#
+# `resolve` splits that script into its `pnpm <task>` calls and runs them one by
+# one. So the repo-specific ones — `validate`, `check:policy`, `skills:check` —
+# come along without anyone listing them here, and adding a check stays a
+# `package.json` edit that CI picks up with no workflow change.
+#
+# A fixed candidate list would have quietly dropped exactly those.
+on:
+  workflow_call:
+    inputs:
+      gate-script:
+        description: >-
+          The package.json script whose `&&`-chained pnpm calls become the
+          checks. A repo whose `.tituskirch-skills.json` names a different
+          `verify` passes that script's name here.
+        required: false
+        type: string
+        default: check
+      fallback-tasks:
+        description: >-
+          JSON array used only when the gate script does not exist — a repo that
+          has no aggregate script still gets its conventional checks.
+        required: false
+        type: string
+        default: '["lint", "format", "typecheck", "test"]'
+      node-version:
+        description: Node version to run the checks under.
+        required: false
+        type: string
+        default: '24'
+      install:
+        description: Dependency install command.
+        required: false
+        type: string
+        default: pnpm install --frozen-lockfile
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: Lint & Format
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    # A draft PR is explicitly "not ready" — the queue workflows read it the
+    # same way, and CI running on one would gate nothing.
+    if: github.event.pull_request.draft == false
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ inputs.node-version }}
+          cache: pnpm
+
+      - name: Install dependencies
+        run: ${{ inputs.install }}
+
+      - name: Resolve the checks
+        id: resolve
+        env:
+          GATE_SCRIPT: ${{ inputs.gate-script }}
+          FALLBACK: ${{ inputs.fallback-tasks }}
+        run: |
+          set -euo pipefail
+
+          tasks=$(node -e '
+            const fs = require("fs");
+            const scripts = JSON.parse(fs.readFileSync("package.json", "utf8")).scripts ?? {};
+            const gate = scripts[process.env.GATE_SCRIPT];
+
+            // Split a script on `&&` and keep each `pnpm <task>` it calls. A
+            // task that takes arguments is left alone — it is not a bare script
+            // and running it standalone would change what it does.
+            const calls = (script) =>
+              script
+                .split("&&")
+                .map((part) => part.trim().match(/^pnpm (?:run )?([A-Za-z0-9_:.-]+)$/))
+                .filter(Boolean)
+                .map((m) => m[1]);
+
+            // RESOLVED RECURSIVELY, because a gate may chain another aggregate:
+            // `skills` runs `verify`, which calls `check`, which is itself
+            // `lint && format`. Stopping at the first level would collapse two
+            // checks into one line. `seen` guards a self-reference.
+            const seen = new Set();
+            const expand = (task) => {
+              if (seen.has(task)) return [];
+              seen.add(task);
+              const body = scripts[task];
+              const inner = body ? calls(body) : [];
+              return inner.length ? inner.flatMap(expand) : [task];
+            };
+
+            const fromGate = gate ? calls(gate).flatMap(expand) : [];
+
+            // Fall back only when the gate script is absent — an existing gate
+            // that yields nothing parseable is a real problem, not a default.
+            const tasks = gate
+              ? fromGate
+              : JSON.parse(process.env.FALLBACK).filter((t) => t in scripts);
+
+            console.log([...new Set(tasks)].join(" "));
+          ')
+
+          if [ -z "$tasks" ]; then
+            echo "::error::No checks resolved. Either package.json has no '"'"'$GATE_SCRIPT'"'"' script and none of the fallback tasks, or the gate chains commands this cannot split."
+            exit 1
+          fi
+
+          echo "tasks=$tasks" >> "$GITHUB_OUTPUT"
+          echo "Resolved checks: $tasks"
+
+      # Each task in its own log group with its own error line, so a red build
+      # names the check that failed without anyone opening the log.
+      - name: Run the checks
+        env:
+          TASKS: ${{ steps.resolve.outputs.tasks }}
+        run: |
+          set -uo pipefail
+
+          for task in $TASKS; do
+            echo "::group::$task"
+            if pnpm "$task"; then
+              echo "::endgroup::"
+            else
+              echo "::endgroup::"
+              echo "::error::$task failed."
+              exit 1
+            fi
+          done
