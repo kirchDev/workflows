@@ -2,28 +2,31 @@
 
 ## Scope
 
-`scaffold` is a **template repository** — it contains configuration files, GitHub workflows, and meta documents that are copied into new repositories. It is not a runtime package and has no users in the traditional sense.
+`workflows` holds the **reusable GitHub Actions workflow bodies** called by every other repository in the kirchDev estate. It is not a runtime package, but it is load-bearing in a way a template never was: a caller pins a ref here and executes whatever that ref contains, inside the caller's own repository.
 
-The supported "version" is always the **tip of `main`**. There are no historical branches to back-port fixes to; downstream repositories should re-pull the relevant file(s) from `main` if a vulnerability is discovered in the shipped templates.
+Two of the bodies — `queue-branch.yml` and `fast-forward-queue.yml` — read a PEM from Bitwarden and mint a GitHub App token whose purpose is to bypass merge gates. A flaw in those has estate-wide reach, which is why callers pin every body to a commit SHA rather than a moving tag.
+
+The supported "version" is the **tip of `main`** plus whatever tags callers currently pin. A fix ships as a new tag; callers pick it up via a Dependabot bump.
 
 ## Reporting a Vulnerability
 
 **Please do not file a public GitHub issue for security problems.**
 
-In the context of this template, a "vulnerability" typically means:
+In the context of this repository, a "vulnerability" typically means:
 
-- An insecure default in a shipped workflow (e.g. overly broad `permissions`).
-- A misconfigured Action that could leak secrets.
-- A dependency in `package.json` that introduces a known CVE.
+- An insecure default in a reusable workflow body (e.g. overly broad `permissions`).
+- A path by which a caller's secrets reach a step that should not see them.
+- An unpinned or compromised third-party Action used inside a body.
+- A weakness in the token-minting path of `queue-branch.yml` / `fast-forward-queue.yml`.
 
 Use one of the following private channels:
 
-1. **GitHub Private Vulnerability Reporting** (preferred): open a private advisory at <https://github.com/TitusKirch/scaffold/security/advisories/new>.
+1. **GitHub Private Vulnerability Reporting** (preferred): open a private advisory at <https://github.com/kirchDev/workflows/security/advisories/new>.
 2. **Email**: [titus.kirch@kirch.dev](mailto:titus.kirch@kirch.dev). PGP available on request.
 
 Please include:
 
-- A description of the vulnerability and its impact on downstream repositories.
+- A description of the vulnerability and its impact on calling repositories.
 - Steps to reproduce.
 - Any suggested fix, if you have one.
 
