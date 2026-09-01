@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.3](https://github.com/kirchDev/workflows/compare/v0.1.2...v0.1.3) (2026-09-01)
+
+
+### Bug Fixes
+
+* **ci:** restore the static analysis job the body had dropped ([8d2c761](https://github.com/kirchDev/workflows/commit/8d2c761170b79fb00925dee8506f6d9abbcfa249))
+
 ## [0.1.2](https://github.com/kirchDev/workflows/compare/v0.1.1...v0.1.2) (2026-09-01)
 
 
