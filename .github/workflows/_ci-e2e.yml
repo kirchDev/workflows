@@ -1,0 +1,140 @@
+# yaml-language-server: $schema=https://json.schemastore.org/github-workflow.json
+
+name: CI E2E (reusable)
+
+# Reusable body for a Playwright suite that drives a real backend.
+#
+# ABSTRACTED AHEAD OF THE SECOND CALLER, deliberately and against this repo's
+# usual rule. `gildstone` already wrote this as a local `workflow_call` body —
+# the work is done, it just lives in the wrong repo. `app` is the same gattung
+# (Laravel plus a JS frontend) and has no E2E; `oggsbreinig` is a third turborepo
+# with `apps/` and `packages/` and no `ci.yml` at all yet; `saas-template` exists
+# to produce more of them. Waiting for the second caller here means the third
+# repo starts by copying eighty lines.
+#
+# THE INPUTS DESCRIBE WHAT TO RUN, NEVER WHETHER TO RUN IT. A repo without E2E
+# does not call this body — there is no `run-e2e: false`.
+on:
+  workflow_call:
+    inputs:
+      build-command:
+        description: Command that builds the app under test.
+        required: true
+        type: string
+      test-command:
+        description: Command that runs the Playwright suite.
+        required: false
+        type: string
+        default: pnpm test:e2e
+      setup-php:
+        description: >-
+          Install PHP and Composer first — for a suite driving a real Laravel
+          API. The backend's own env belongs in the repo, not here.
+        required: false
+        type: boolean
+        default: false
+      php-version:
+        description: PHP version when `setup-php` is set.
+        required: false
+        type: string
+        default: '8.4'
+      node-version:
+        description: Node version.
+        required: false
+        type: string
+        default: '24'
+      node-heap-mb:
+        description: >-
+          `--max-old-space-size`. Building a full app exceeds node's default heap
+          and aborts with SIGABRT ("Ineffective mark-compacts near heap limit").
+        required: false
+        type: number
+        default: 4096
+      timeout-minutes:
+        description: Job timeout — a browser suite is slow by nature.
+        required: false
+        type: number
+        default: 30
+      report-path:
+        description: Playwright report directory to upload on failure.
+        required: false
+        type: string
+        default: playwright-report/
+
+jobs:
+  e2e:
+    name: E2E check
+    runs-on: ubuntu-latest
+    timeout-minutes: ${{ inputs.timeout-minutes }}
+    permissions:
+      contents: read
+    env:
+      TURBO_TELEMETRY_DISABLED: 1
+      NODE_OPTIONS: --max-old-space-size=${{ inputs.node-heap-mb }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+
+      # The suite drives the real backend, so a Laravel repo needs the PHP side
+      # installed before the frontend build.
+      - name: Setup PHP
+        if: inputs.setup-php
+        uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # 2.37.2
+        with:
+          php-version: ${{ inputs.php-version }}
+          coverage: none
+
+      - name: Install Composer dependencies
+        if: inputs.setup-php
+        run: composer install --no-interaction --prefer-dist --optimize-autoloader
+
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ inputs.node-version }}
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # Browsers are cached by Playwright's own version, not the lockfile hash:
+      # the download is tied to that version alone, so a lockfile change that
+      # leaves Playwright untouched must not invalidate half a gigabyte.
+      - name: Resolve the Playwright version
+        id: pw
+        run: |
+          set -euo pipefail
+          version=$(node -p "require('@playwright/test/package.json').version" 2>/dev/null || echo unknown)
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Cache Playwright browsers
+        uses: actions/cache@v6
+        with:
+          path: ~/.cache/ms-playwright
+          key: ${{ runner.os }}-playwright-${{ steps.pw.outputs.version }}
+
+      - name: Install Playwright browsers
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: Build
+        env:
+          BUILD_COMMAND: ${{ inputs.build-command }}
+        run: bash -c "$BUILD_COMMAND"
+
+      - name: Run the E2E suite
+        env:
+          TEST_COMMAND: ${{ inputs.test-command }}
+        run: bash -c "$TEST_COMMAND"
+
+      # A failed browser run is unreadable without its trace, and the report is
+      # the only artefact that survives the runner.
+      - name: Upload the Playwright report
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: playwright-report
+          path: ${{ inputs.report-path }}
+          retention-days: 7
+          if-no-files-found: ignore

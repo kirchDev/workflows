@@ -1,0 +1,74 @@
+# yaml-language-server: $schema=https://json.schemastore.org/github-workflow.json
+
+name: CodeQL (reusable)
+
+# Reusable body. The caller carries the triggers — including its own
+# `branches:` and any `paths:` filter — and names the languages to scan.
+# See README → CodeQL for the stub.
+#
+# The 15 copies this replaces differed in almost nothing but their action pins:
+# `v4`, `v4.37.3`, `v4.37.4`, `v4.37.8`, `v4.37.9` and a raw SHA were all in
+# circulation for the same two steps. A body has one pin.
+on:
+  workflow_call:
+    inputs:
+      languages:
+        description: >-
+          JSON array of CodeQL languages to scan, e.g. '["actions","javascript-typescript"]'.
+          Add "go" for a Go repo — the build mode is handled per language below.
+        required: false
+        type: string
+        default: '["actions", "javascript-typescript"]'
+      timeout-minutes:
+        description: Per-language analysis timeout.
+        required: false
+        type: number
+        default: 20
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  analyze:
+    name: Analyze (${{ matrix.language }})
+    runs-on: ubuntu-latest
+    timeout-minutes: ${{ inputs.timeout-minutes }}
+    permissions:
+      security-events: write
+      packages: read
+      actions: read
+      contents: read
+
+    strategy:
+      fail-fast: false
+      matrix:
+        language: ${{ fromJSON(inputs.languages) }}
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+
+      # THE BUILD MODE IS PER LANGUAGE, not shared, and that is a CodeQL
+      # constraint rather than a preference: Go rejects `none` outright ("Go does
+      # not support the none build mode") and has to be built. Deriving it from
+      # the matrix value keeps a Go repo on the same body as everyone else —
+      # in the copies this replaces, adding Go meant forking the whole file.
+      - uses: actions/setup-go@v7
+        if: matrix.language == 'go'
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v4.37.9
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: ${{ matrix.language == 'go' && 'autobuild' || 'none' }}
+          queries: security-extended,security-and-quality
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v4.37.9
+        with:
+          category: '/language:${{ matrix.language }}'

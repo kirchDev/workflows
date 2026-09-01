@@ -1,42 +1,36 @@
 {
   "$schema": "https://www.schemastore.org/package.json",
-  "name": "scaffold",
-  "version": "0.4.1",
-  "description": "Language-agnostic baseline template for new kirchDev repositories.",
+  "name": "workflows",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Central reusable GitHub Actions workflows for the kirchDev estate.",
   "keywords": [
-    "commitlint",
-    "conventional-commits",
-    "dependabot",
-    "github-template",
-    "husky",
+    "actions",
+    "ci",
+    "github-actions",
     "kirchdev",
-    "nodejs",
-    "oxfmt",
-    "oxlint",
-    "pnpm",
-    "release-please",
-    "scaffold",
-    "template",
-    "typescript"
+    "reusable-workflows",
+    "workflow-call"
   ],
-  "homepage": "https://github.com/TitusKirch/scaffold#readme",
+  "homepage": "https://github.com/kirchDev/workflows#readme",
   "bugs": {
-    "url": "https://github.com/TitusKirch/scaffold/issues"
+    "url": "https://github.com/kirchDev/workflows/issues"
   },
   "license": "MIT",
   "author": "Titus Kirch <titus.kirch@kirch.dev>",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/TitusKirch/scaffold.git"
+    "url": "git+https://github.com/kirchDev/workflows.git"
   },
   "type": "module",
   "scripts": {
     "lint": "oxlint . --deny-warnings",
     "lint:fix": "oxlint . --fix --deny-warnings",
+    "lint:actions": "docker run --rm -e SHELLCHECK_OPTS=\"-e SC2016 -e SC2086 -e SC2129\" -v \"$PWD\":/repo -w /repo rhysd/actionlint:1.7.7 -color",
     "format": "oxfmt --check .",
     "format:fix": "oxfmt .",
     "typecheck": "tsc --noEmit",
-    "check": "pnpm lint && pnpm format && pnpm typecheck && pnpm check:policy",
+    "check": "pnpm lint && pnpm lint:actions && pnpm format && pnpm typecheck && pnpm check:policy",
     "check:fix": "pnpm lint:fix && pnpm format:fix",
     "check:policy": "node scripts/check-policy-parity.ts",
     "skills:update": "pnpm dlx skills@latest update -p -y",

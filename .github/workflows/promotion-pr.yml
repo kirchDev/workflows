@@ -1,0 +1,22 @@
+# yaml-language-server: $schema=https://json.schemastore.org/github-workflow.json
+
+# This repo's own stub — byte-identical to the one every other repo carries,
+# except that it calls the body by local path instead of `owner/repo@ref`.
+# A body has no trigger of its own, so without this file no promotion PR
+# would be opened here at all.
+name: Promotion PR
+
+on:
+  push:
+    branches:
+      - dev
+      - stage
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  promotion-pr:
+    name: Promotion PR
+    uses: ./.github/workflows/_promotion-pr.yml

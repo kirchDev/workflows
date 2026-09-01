@@ -1,0 +1,58 @@
+# yaml-language-server: $schema=https://json.schemastore.org/github-workflow.json
+
+name: CI OpenTofu (reusable)
+
+# Reusable body for OpenTofu configuration: fmt, validate, lint and scan.
+#
+# ONE REPO USES THIS TODAY (`infrastructure`), so it is written as a body rather
+# than left in place for one reason: `infrastructure` is where the estate's own
+# SSOT lives, and a second repo touching Tofu should not start by copying 350
+# lines. A body with one caller is a bet; a copy with two is a certainty.
+on:
+  workflow_call:
+    inputs:
+      working-directory:
+        description: Directory holding the Tofu configuration.
+        required: false
+        type: string
+        default: tofu
+      tofu-version:
+        description: OpenTofu version.
+        required: false
+        type: string
+        default: latest
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  tofu:
+    name: OpenTofu
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: ${{ inputs.working-directory }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+
+      - uses: opentofu/setup-opentofu@a1320f892987e89d278cc92dc5adc984fb93aca4 # v2.0.2
+        with:
+          tofu_version: ${{ inputs.tofu-version }}
+          tofu_wrapper: false
+
+      - name: Format check
+        run: tofu fmt -check -recursive
+
+      # `init -backend=false` because validation needs the providers but must
+      # not touch remote state — a CI run has no business reading it.
+      - name: Init (no backend)
+        run: tofu init -backend=false
+
+      - name: Validate
+        run: tofu validate

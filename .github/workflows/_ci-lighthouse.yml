@@ -1,0 +1,286 @@
+# yaml-language-server: $schema=https://json.schemastore.org/github-workflow.json
+
+name: CI Lighthouse (reusable)
+
+# Reusable body for a sharded Lighthouse audit. Taken from kirchDev/app, where
+# it runs in production, and generalised at the two points that were repo-local:
+# how the shard list is produced, and how the app is built.
+#
+# ABSTRACTED AHEAD OF THE SECOND CALLER, like `_ci-e2e.yml` and for the same
+# reason: `app` has Lighthouse and no E2E, `gildstone` has E2E and no
+# Lighthouse, and they are the same gattung. `oggsbreinig` is a third repo of
+# that shape still waiting for its `ci.yml`. The two bodies are the halves each
+# repo is missing from the other.
+#
+# ONE RUNNER PER PAGE, not one runner measuring several pages at once. Two
+# Chrome instances on the same worker contend for CPU, and that contention lands
+# in the very numbers being measured — total blocking time, largest contentful
+# paint. In-process parallelism would buy wall-clock by corrupting the result.
+#
+# WHAT IS MEASURED IS NOT THIS BODY'S BUSINESS, and there is deliberately no
+# `categories` input. Which Lighthouse categories run, and which of them gate,
+# belongs to the caller's own audit config — `app` keeps both in
+# `scripts/audit.config.ts`, where a new category is one line and CI needs no
+# change at all. Adding the input here would split that decision across two
+# files that then have to agree.
+#
+# This body generalises the SHARDING and the MERGE. The measuring stays where
+# the thresholds are.
+on:
+  workflow_call:
+    inputs:
+      targets:
+        description: >-
+          JSON array of pages to audit, one shard each. Mutually exclusive with
+          `targets-command`.
+        required: false
+        type: string
+        default: ''
+      targets-command:
+        description: >-
+          Command printing that JSON array instead — for a repo whose page list
+          is derived from its own routes rather than written out.
+        required: false
+        type: string
+        default: ''
+      build-command:
+        description: Command that builds the app before measuring it.
+        required: true
+        type: string
+      audit-command:
+        description: >-
+          Command auditing one target. The target is available as $TARGET.
+        required: false
+        type: string
+        default: pnpm audit:lighthouse
+      setup-php:
+        description: Install PHP and Composer first — for a Laravel-backed app.
+        required: false
+        type: boolean
+        default: false
+      php-version:
+        description: PHP version when `setup-php` is set.
+        required: false
+        type: string
+        default: '8.4'
+      node-version:
+        description: Node version.
+        required: false
+        type: string
+        default: '24'
+      timeout-minutes:
+        description: Per-shard timeout.
+        required: false
+        type: number
+        default: 20
+      report-path:
+        description: >-
+          Where a shard writes its report. Each shard uploads its own; the
+          summary job below merges them back into one.
+        required: false
+        type: string
+        default: ''
+      merge-command:
+        description: >-
+          Command that turns the downloaded shard reports into one summary. It
+          receives the directory as $REPORTS. Empty skips the merge entirely —
+          a repo auditing a single page has nothing to merge.
+        required: false
+        type: string
+        default: ''
+      summary-file:
+        description: >-
+          Markdown file the merge writes, relative to the report directory. When
+          set, it is posted to the pull request as a sticky comment of its own.
+        required: false
+        type: string
+        default: ''
+    outputs:
+      report-artifact:
+        description: Name of the merged report artifact, if one was produced.
+        value: ${{ jobs.summary.outputs.artifact }}
+
+jobs:
+  # DELIBERATELY IMPORT-LIGHT: checkout and a bare Node, no dependency install.
+  # A shard list is a handful of strings, and `pnpm install` to read them would
+  # put ~20s on the critical path of every audit. `targets-command` therefore
+  # has to run on Node alone — in `app` that is a script importing nothing but
+  # its own config. A command needing installed dependencies belongs in the
+  # shard job, not here.
+  targets:
+    name: Plan the Audit
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      targets: ${{ steps.plan.outputs.targets }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ inputs.node-version }}
+
+      - name: Read the audit targets
+        id: plan
+        env:
+          TARGETS: ${{ inputs.targets }}
+          TARGETS_COMMAND: ${{ inputs.targets-command }}
+        run: |
+          set -euo pipefail
+
+          if [ -n "$TARGETS" ] && [ -n "$TARGETS_COMMAND" ]; then
+            echo "::error::Pass either targets or targets-command, not both."
+            exit 1
+          fi
+
+          if [ -n "$TARGETS" ]; then
+            targets=$TARGETS
+          elif [ -n "$TARGETS_COMMAND" ]; then
+            targets=$(eval "$TARGETS_COMMAND")
+          else
+            echo "::error::Neither targets nor targets-command was given."
+            exit 1
+          fi
+
+          if ! printf '%s' "$targets" | jq -e 'type == "array" and length > 0' > /dev/null 2>&1; then
+            echo "::error::Targets must be a non-empty JSON array, got: $targets"
+            exit 1
+          fi
+
+          echo "targets=$targets" >> "$GITHUB_OUTPUT"
+          echo "Auditing: $targets"
+
+  audit:
+    name: Lighthouse Audit (${{ matrix.target }})
+    needs: targets
+    runs-on: ubuntu-latest
+    timeout-minutes: ${{ inputs.timeout-minutes }}
+    permissions:
+      contents: read
+    strategy:
+      # One failing page must not cancel the runners measuring the others: the
+      # first red shard would otherwise hide every other regression until it is
+      # fixed, turning one bad run into several.
+      fail-fast: false
+      matrix:
+        target: ${{ fromJSON(needs.targets.outputs.targets) }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+
+      - name: Setup PHP
+        if: inputs.setup-php
+        uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # 2.37.2
+        with:
+          php-version: ${{ inputs.php-version }}
+          coverage: none
+
+      - name: Install Composer dependencies
+        if: inputs.setup-php
+        run: composer install --no-interaction --prefer-dist --optimize-autoloader
+
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ inputs.node-version }}
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # Every shard builds the app itself. Sharing one build through an artifact
+      # would be cheaper in CPU and wrong in kind: the measurement is of a real
+      # load on a runner that has done nothing else, and reusing a build means
+      # reusing whatever state producing it left behind.
+      - name: Build
+        env:
+          BUILD_COMMAND: ${{ inputs.build-command }}
+        run: bash -c "$BUILD_COMMAND"
+
+      - name: Audit
+        env:
+          TARGET: ${{ matrix.target }}
+          AUDIT_COMMAND: ${{ inputs.audit-command }}
+        run: bash -c "$AUDIT_COMMAND"
+
+      # One artifact per shard, named after the target, so the summary job can
+      # collect them with a pattern. Uploaded even on failure: a red audit is
+      # exactly when its numbers are worth reading.
+      - name: Upload the shard report
+        if: always() && inputs.report-path != ''
+        uses: actions/upload-artifact@v7
+        with:
+          name: lighthouse-report-${{ strategy.job-index }}
+          path: ${{ inputs.report-path }}
+          retention-days: 1
+          if-no-files-found: ignore
+
+  # Each shard gates on its own pages — violations are decided per measurement,
+  # with no cross-page context — so nothing waits for the others to fail
+  # correctly. Only the REPORT is reassembled, which is what this job is for.
+  # ONE THREAD PER REPORTER, not one thread for everything. `app` collected
+  # coverage and the audit into a single comment to avoid a second thread, and
+  # that coupling is what stopped either half from becoming a body — a repo
+  # calling `_coverage.yml` alongside it would have got the second thread
+  # anyway. Each reporter now owns its own sticky marker instead: `coverage`
+  # there, `lighthouse` here. Two threads is the price, and it buys two bodies
+  # that neither know nor need each other.
+  summary:
+    name: Merge the Audit Reports
+    needs: audit
+    if: always() && inputs.merge-command != '' && inputs.report-path != ''
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # The sticky comment. Only requested when there is one to post.
+      pull-requests: write
+    outputs:
+      artifact: lighthouse-report
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ inputs.node-version }}
+
+      - name: Download the shard reports
+        uses: actions/download-artifact@v7
+        with:
+          pattern: lighthouse-report-*
+          merge-multiple: true
+          path: tmp/lighthouse
+
+      - name: Merge the shard reports
+        env:
+          REPORTS: tmp/lighthouse
+          MERGE_COMMAND: ${{ inputs.merge-command }}
+        run: bash -c "$MERGE_COMMAND"
+
+      - name: Upload the merged report
+        uses: actions/upload-artifact@v7
+        with:
+          name: lighthouse-report
+          path: tmp/lighthouse
+          retention-days: 7
+          if-no-files-found: ignore
+
+      # `header` is what makes it sticky: the action edits the comment carrying
+      # that marker instead of adding one, so a re-run updates the numbers
+      # rather than stacking them. `coverage` is the marker `_coverage.yml`
+      # uses; this one must never collide with it.
+      - name: Post the audit summary to the pull request
+        if: >-
+          inputs.summary-file != ''
+          && github.event_name == 'pull_request'
+          && github.actor != 'dependabot[bot]'
+        uses: marocchino/sticky-pull-request-comment@5770ad5eb8f42dd2c4f34da00c94c5381e49af88 # v3.0.5
+        with:
+          header: lighthouse
+          path: tmp/lighthouse/${{ inputs.summary-file }}

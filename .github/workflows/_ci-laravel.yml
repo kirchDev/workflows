@@ -1,0 +1,272 @@
+# yaml-language-server: $schema=https://json.schemastore.org/github-workflow.json
+
+name: CI Laravel (reusable)
+
+# Reusable body for the Laravel packages: Pest across a PHP × Laravel matrix,
+# a PostgreSQL run, coverage with a gate, and Pint. The caller carries the
+# trigger. See README → CI for the stub.
+#
+# THE MATRIX IS THE ONE THING THIS CANNOT DERIVE. Which PHP and Laravel versions
+# a package supports is a decision recorded in its composer.json constraints,
+# not a fact readable from the repo — so it is an input, and the only one that
+# describes what to run rather than whether to run it.
+#
+# A MATRIX HERE, unlike in `_ci-check.yml`, earns its overhead: each cell runs
+# for minutes, they are genuinely independent, and `test` deserves to be a
+# required check separate from `lint`.
+on:
+  workflow_call:
+    inputs:
+      php-versions:
+        description: JSON array of PHP versions, e.g. '["8.4", "8.5"]'.
+        required: true
+        type: string
+      laravel-versions:
+        description: JSON array of Laravel constraints, e.g. '["13.*"]'.
+        required: true
+        type: string
+      illuminate-packages:
+        description: >-
+          JSON array of illuminate/* packages to pin to the matrix's Laravel
+          version. Defaults to the set a typical package depends on.
+        required: false
+        type: string
+        default: '["auth", "contracts", "database", "events", "support"]'
+      coverage-php:
+        description: PHP version the coverage run uses.
+        required: false
+        type: string
+        default: '8.4'
+      min-coverage:
+        description: Coverage gate in percent — the run fails below it.
+        required: false
+        type: number
+        default: 90
+      pcov-directory:
+        description: Directory PCOV instruments.
+        required: false
+        type: string
+        default: src
+      postgres-database:
+        description: Database name for the PostgreSQL run.
+        required: false
+        type: string
+        default: testing
+      extensions:
+        description: PHP extensions for the SQLite runs.
+        required: false
+        type: string
+        default: dom, curl, libxml, mbstring, zip, pdo, sqlite3, pdo_sqlite
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Pest (PHP ${{ matrix.php }}, Laravel ${{ matrix.laravel }}, ${{ matrix.dependencies }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    strategy:
+      # One red cell must not cancel the others — knowing that only PHP 8.5
+      # fails is the reason for running a matrix at all.
+      fail-fast: false
+      matrix:
+        php: ${{ fromJSON(inputs.php-versions) }}
+        laravel: ${{ fromJSON(inputs.laravel-versions) }}
+        # `lowest` catches a dependency the package uses but under-constrains —
+        # a bug that only ever appears in someone else's install.
+        dependencies: [highest, lowest]
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # 2.37.2
+        with:
+          php-version: ${{ matrix.php }}
+          extensions: ${{ inputs.extensions }}
+          coverage: none
+
+      - name: Cache Composer downloads
+        uses: actions/cache@v6
+        with:
+          path: ~/.composer/cache/files
+          key: ${{ runner.os }}-composer-${{ matrix.php }}-${{ matrix.laravel }}-${{ matrix.dependencies }}-${{ hashFiles('composer.json') }}
+          restore-keys: |
+            ${{ runner.os }}-composer-${{ matrix.php }}-${{ matrix.laravel }}-${{ matrix.dependencies }}-
+
+      - name: Pin Laravel version
+        env:
+          PACKAGES: ${{ inputs.illuminate-packages }}
+          LARAVEL: ${{ matrix.laravel }}
+        run: |
+          set -euo pipefail
+          # Only the illuminate/* packages the composer.json actually requires
+          # are pinned — requiring one it does not depend on would add it.
+          args=$(node -e '
+            const fs = require("fs");
+            const req = JSON.parse(fs.readFileSync("composer.json", "utf8")).require ?? {};
+            const wanted = JSON.parse(process.env.PACKAGES);
+            const v = process.env.LARAVEL;
+            console.log(
+              wanted
+                .map((p) => `illuminate/${p}`)
+                .filter((p) => p in req)
+                .map((p) => `"${p}:${v}"`)
+                .join(" ")
+            );
+          ')
+
+          if [ -z "$args" ]; then
+            echo "::warning::composer.json requires none of the named illuminate/* packages — nothing pinned."
+            exit 0
+          fi
+
+          eval "composer require $args --no-update --no-interaction"
+
+      - name: Install Composer dependencies
+        env:
+          LOWEST: ${{ matrix.dependencies == 'lowest' }}
+        run: |
+          if [ "$LOWEST" = "true" ]; then
+            composer update --prefer-dist --no-progress --prefer-lowest --prefer-stable
+          else
+            composer update --prefer-dist --no-progress
+          fi
+
+      - name: Run Pest
+        run: composer test
+
+  test-pgsql:
+    name: Pest (PostgreSQL)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+
+    # The SQLite matrix above would not catch a query PostgreSQL rejects, and
+    # that is where these packages actually run.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: ${{ inputs.postgres-database }}
+          POSTGRES_USER: testing
+          POSTGRES_PASSWORD: testing
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U testing"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      DB_CONNECTION: pgsql
+      DB_HOST: 127.0.0.1
+      DB_PORT: 5432
+      DB_DATABASE: ${{ inputs.postgres-database }}
+      DB_USERNAME: testing
+      DB_PASSWORD: testing
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # 2.37.2
+        with:
+          php-version: ${{ inputs.coverage-php }}
+          extensions: dom, curl, libxml, mbstring, zip, pdo, pdo_pgsql
+          coverage: none
+
+      - name: Cache Composer downloads
+        uses: actions/cache@v6
+        with:
+          path: ~/.composer/cache/files
+          key: ${{ runner.os }}-composer-pgsql-${{ hashFiles('composer.json') }}
+          restore-keys: |
+            ${{ runner.os }}-composer-pgsql-
+
+      - name: Install Composer dependencies
+        run: composer update --prefer-dist --no-progress
+
+      - name: Run Pest
+        run: composer test
+
+  coverage:
+    name: Coverage (PCOV)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: test
+    permissions:
+      contents: read
+      pull-requests: write
+    outputs:
+      report: coverage.xml
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # 2.37.2
+        with:
+          php-version: ${{ inputs.coverage-php }}
+          extensions: ${{ inputs.extensions }}, pcov
+          coverage: pcov
+          ini-values: pcov.directory=${{ inputs.pcov-directory }}
+
+      - name: Cache Composer downloads
+        uses: actions/cache@v6
+        with:
+          path: ~/.composer/cache/files
+          key: ${{ runner.os }}-composer-coverage-${{ hashFiles('composer.json') }}
+          restore-keys: |
+            ${{ runner.os }}-composer-coverage-
+
+      - name: Install Composer dependencies
+        run: composer update --prefer-dist --no-progress
+
+      # Cobertura rather than clover, because that is what the estate's own
+      # coverage-report action reads. The `--min` gate fails the run here;
+      # reporting it to the PR is `_coverage.yml`'s job.
+      - name: Run Pest with coverage
+        env:
+          MIN_COVERAGE: ${{ inputs.min-coverage }}
+        run: vendor/bin/pest --coverage --coverage-cobertura=coverage.xml --min="$MIN_COVERAGE"
+
+      - name: Upload the coverage report
+        uses: actions/upload-artifact@v7
+        with:
+          name: coverage-cobertura
+          path: coverage.xml
+          retention-days: 1
+
+  lint:
+    name: Pint
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # 2.37.2
+        with:
+          php-version: ${{ inputs.coverage-php }}
+          coverage: none
+
+      - name: Install Composer dependencies
+        run: composer update --prefer-dist --no-progress
+
+      - name: Pint
+        run: vendor/bin/pint --test

@@ -1,0 +1,95 @@
+# yaml-language-server: $schema=https://json.schemastore.org/github-workflow.json
+
+name: CI Go (reusable)
+
+# Reusable body for the three Terraform providers: gofmt, vet, golangci-lint,
+# build, unit tests, and the acceptance suite against a mocked API.
+#
+# NO INPUT DESCRIBES THE PROJECT — `go.mod` already names the toolchain, and
+# `./...` already names the packages. The only inputs are the two things go.mod
+# does not carry: which lint version to hold, and whether acceptance tests exist.
+on:
+  workflow_call:
+    inputs:
+      golangci-lint-version:
+        description: golangci-lint version to run.
+        required: false
+        type: string
+        default: v2.12.2
+      acceptance-tests:
+        description: >-
+          Run the acceptance suite. It drives a real apply/refresh/import/destroy
+          cycle against an in-memory mock, so it needs a TF binary but no token.
+        required: false
+        type: boolean
+        default: true
+      acceptance-path:
+        description: Package holding the acceptance tests.
+        required: false
+        type: string
+        default: ./internal/provider/
+      acceptance-timeout:
+        description: Go test timeout for the acceptance suite.
+        required: false
+        type: string
+        default: 10m
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  go:
+    name: Go Build & Test
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # `gofmt -l` exits 0 whether or not it found anything, so the file list is
+      # the signal — checking the exit code would pass silently on a diff.
+      - name: Format check
+        run: |
+          unformatted=$(gofmt -s -l .)
+          if [ -n "$unformatted" ]; then
+            echo "::error::These files are not gofmt-formatted:"
+            echo "$unformatted"
+            exit 1
+          fi
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Lint (golangci-lint)
+        uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
+        with:
+          version: ${{ inputs.golangci-lint-version }}
+
+      - name: Build
+        run: go build ./...
+
+      - name: Test
+        run: go test ./...
+
+      # The terraform-plugin-testing harness shells out to a real TF binary.
+      - name: Install OpenTofu
+        if: inputs.acceptance-tests
+        uses: opentofu/setup-opentofu@a1320f892987e89d278cc92dc5adc984fb93aca4 # v2.0.2
+        with:
+          tofu_wrapper: false
+
+      - name: Acceptance tests (mock API)
+        if: inputs.acceptance-tests
+        env:
+          TF_ACC: '1'
+          ACCEPTANCE_PATH: ${{ inputs.acceptance-path }}
+          ACCEPTANCE_TIMEOUT: ${{ inputs.acceptance-timeout }}
+        run: go test "$ACCEPTANCE_PATH" -run TestAcc -timeout "$ACCEPTANCE_TIMEOUT"

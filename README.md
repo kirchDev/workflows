@@ -1,107 +1,328 @@
 <div align="center">
 
-# 🏗️ scaffold
+# 🤖 workflows
 
-**The kirchDev baseline — everything a new repo should ship with on day one, nothing more**
+**Write a CI workflow once — every repo in the estate runs it**
 
 </div>
 
 ---
 
-```bash
-gh repo create my-new-repo --template TitusKirch/scaffold
+```yaml
+jobs:
+  promotion-pr:
+    uses: kirchDev/workflows/.github/workflows/_promotion-pr.yml@9f3c1a2 # v0.1.0
 ```
 
-That's it. Click **Use this template** (or use `gh`), edit a handful of placeholders, and the meta layer — lint, format, commit hooks, CI, CodeQL, Dependabot, release-please — is already wired up.
+That's it. A repo carries a stub with the trigger; the workflow body lives here, once.
 
-## ✨ What's in the box
+## 🤔 Why
 
-- **🟢 Node + pnpm pinned** — `.nvmrc` (Node 24), `pnpm-workspace.yaml` (pnpm 11 with sane defaults), `package.json` with `packageManager`.
-- **🧹 Lint & format via oxc** — `.oxlintrc.json`, `.oxfmtrc.json`, single `pnpm check` gate.
-- **🔷 TypeScript, no build step** — meta scripts and tool configs are `.ts`, run straight off Node 24's native type stripping; `tsconfig.json` + `pnpm typecheck`.
-- **🪝 Commit hooks** — Husky + `lint-staged` + `commitlint` enforcing Conventional Commits.
-- **🤖 Dependency PRs** — Dependabot (npm weekly, actions monthly) + `taze.config.ts` for interactive upgrades.
-- **🔁 release-please** — full workflow + config + manifest so the new repo can publish from its first commit.
-- **🛡️ GitHub workflows** — `ci.yml` (lint + format + typecheck + policy parity on PR), `codeql.yml` (push/PR + weekly).
-- **📋 Issue / PR templates** — bug report, feature request, question (`.yml` forms) + PR checklist.
-- **📄 Standard meta** — `LICENSE`, `CODE_OF_CONDUCT.md`, `CONTRIBUTING.md`, `SECURITY.md`.
-- **🤖 Agent-ready** — `CLAUDE.md` + `AGENTS.md` (kept in sync), `.tituskirch-skills.json`, baseline `.claude/settings.json` permissions, `pnpm skills:update` wiring.
+The canonical workflows used to live in [`scaffold`](https://github.com/TitusKirch/scaffold) and were _copied_ into every new repo, where they immediately began to drift. Measured across the 27 repos of both owners:
 
-The actual project code can be anything — PHP, Go, Rust, Vue, plain shell. `scaffold` only owns the meta layer that sits on top.
+| Workflow                 | Repos | Variants | Lines     |
+| :----------------------- | ----: | -------: | :-------- |
+| `fast-forward-queue.yml` |    26 |        8 | 189 – 397 |
+| `ci.yml`                 |    25 |       24 | 42 – 696  |
+| `queue-branch.yml`       |    23 |        6 | 175 / 195 |
+| `release-please.yml`     |    22 |       18 | 37 – 178  |
+| `dev-pr.yml`             |    20 |        2 | 38        |
+| `codeql.yml`             |    18 |       15 | 47 – 68   |
+
+`dev-pr.yml` is the outlier that proves the point: two variants differing only in the runner label, 760 lines doing one thing. Everything else has already fragmented — `ci.yml` is effectively unique per repo, and `fast-forward-queue.yml` splits into a 10-repo group, a 6-repo group, and six smaller ones carrying a fix the others never got. A fix meant 20 commits, and nothing told you which repos you had missed. A call has none of that. The body is fixed in one place, and every repo picks the fix up on its next bump.
 
 ## 🚀 Setup
 
-After clicking **Use this template**:
+Add the stub to the calling repo. It carries the trigger and nothing else:
 
-1. Clone your new repo.
-2. Replace the placeholders listed in [Customising the template](#-customising-the-template).
-3. Reset release-please as described in [Resetting release-please](#-resetting-release-please) (only if you want to start at `v0.0.0`).
-4. `pnpm install` — Husky activates the hooks via the `prepare` script.
-5. Add your project code and ship the first commit:
-
-   ```bash
-   git commit -m "chore: initial commit from scaffold"
-   ```
-
-## 🤖 AI & skills
-
-Every repo from this template is agent-ready on day one:
-
-- **`CLAUDE.md` + `AGENTS.md`** — one set of guidance for Claude Code and vendor-neutral agent tools (Codex, OpenCode, Cursor, Copilot). Kept **byte-identical** — edit one, edit the other.
-- **`.claude/settings.json`** — baseline permissions: read-only git and the `pnpm` scripts are allowed; destructive git (`push`, `reset --hard`, `clean -f`, …) is denied.
-- **`.tituskirch-skills.json`** — configures the [TitusKirch skills](https://github.com/TitusKirch/skills) (commit, PR, issue, release, docs) per repo.
-
-Install the skill bundle, then keep project-scoped skills fresh:
-
-```bash
-pnpm dlx skills add TitusKirch/skills   # add the bundle — npx / yarn dlx / bunx work too
-pnpm skills:update                       # refresh project-scoped skills
+```yaml
+# .github/workflows/promotion-pr.yml
+name: Promotion PR
+on:
+  push:
+    branches: [dev, stage]
+jobs:
+  promotion-pr:
+    name: Promotion PR
+    uses: kirchDev/workflows/.github/workflows/_promotion-pr.yml@9f3c1a2 # v0.1.0
 ```
 
-## 🧰 Customising the template
-
-Every file below references `TitusKirch/scaffold`, the maintainer's name, or the maintainer's email. Search-and-replace these to your repo's identity before the first push.
-
-| File                                  | Replace                                                                          |
-| :------------------------------------ | :------------------------------------------------------------------------------- |
-| `package.json`                        | `name`, `description`, `homepage`, `bugs.url`, `repository.url`, `author`        |
-| `README.md`                           | Project title, tagline, hook snippet, every `TitusKirch/scaffold` link           |
-| `LICENSE`                             | Copyright year + holder                                                          |
-| `CODE_OF_CONDUCT.md`                  | Enforcement contact email                                                        |
-| `CONTRIBUTING.md`                     | Every `TitusKirch/scaffold` link, the development setup section                  |
-| `SECURITY.md`                         | Advisory URL, contact email, scope wording                                       |
-| `.github/ISSUE_TEMPLATE/*.yml`        | Generic as shipped. `config.yml` links questions/ideas/possible-bugs to the Discord forum — private repos without a forum drop that block; optionally add stack-specific version fields to `bug_report.yml` |
-| `.github/pull_request_template.md`    | Example commit message in the title hint                                         |
-| `release-please-config.json`          | `packages["."]["package-name"]`                                                  |
-| `CLAUDE.md` + `AGENTS.md`             | **Delete both** and regenerate with `/init` in Claude Code — scaffold-specific, keep byte-identical |
-
-> [!TIP]
-> A quick `grep -rn "TitusKirch/scaffold" .` catches every reference in one sweep.
+Then delete the body that used to live in that file. Nothing else moves. List `stage` in the trigger even on a repo that has no `stage` branch — a filter naming a branch that doesn't exist is a no-op, and it keeps the stub identical everywhere.
 
 > [!IMPORTANT]
-> **Private repo?** Two defaults are public-only. Delete `.github/workflows/codeql.yml` (CodeQL needs GitHub Advanced Security — free only on public repos), and swap the MIT `LICENSE` + README footer for a proprietary notice with `package.json` `"license": "UNLICENSED"`.
+> A called workflow's jobs report as `<caller-job> / <body-job>`, so the check that was `Open or update dev → main PR` becomes `Promotion PR / Open or update the draft PR`. Any **branch-protection rule requiring the old name keeps waiting for a check that will never arrive.** Update the rule in the same change, once per repo.
 
-## 🔁 Resetting release-please
+## 📦 Available workflows
 
-`scaffold` ships with an initial manifest pinned at `0.0.0`. For most cases you can leave it alone — release-please will simply propose a first release PR after your first conventional commit on `main`. If you want a truly clean slate:
+A **body** is prefixed with `_` and runs only via `workflow_call`. Anything without the prefix is an ordinary workflow — including this repo's own stubs.
 
-1. **Manifest** — make sure `.release-please-manifest.json` is `{ ".": "0.0.0" }` (the default).
-2. **Changelog** — delete `CHANGELOG.md` if your fresh repo somehow inherited one.
-3. **Config** — update `release-please-config.json` → `packages["."]["package-name"]` to your repo name.
-4. **Workflow permissions** — in **Settings → Actions → General → Workflow permissions**, enable **Read and write permissions** so release-please can open its PR.
-5. **Tags & releases (optional)** — if you copied the repo with history, drop old tags:
+Nineteen bodies in four groups: **branch flow** (`_promotion-pr.yml`, `_queue-branch.yml`, `_fast-forward-queue.yml`), **releasing** (`_release-please.yml`, `_publish-npm.yml`, `_publish-goreleaser.yml`), **CI** (`_ci-check.yml`, plus one body per stack — Node, Laravel, Go, OpenTofu, Rust, E2E, Lighthouse), and **reporting and short-circuits** (`_codeql.yml`, `_coverage.yml`, `_verified.yml`, `_record-verified.yml`, `_detect-changes.yml`).
 
-   ```bash
-   git tag -l | xargs -r git tag -d
-   ```
+<details>
+<summary>All 19 bodies, and why <code>ci.yml</code> is not one of them</summary>
 
-   …and clear any stale entries on the GitHub **Releases** tab.
+| Body                      | What it does                                            | Status      |
+| :------------------------ | :------------------------------------------------------ | :---------- |
+| `_promotion-pr.yml`       | Opens and updates the rolling draft promotion PR        | ✅ reusable |
+| `_queue-branch.yml`       | Cuts the queue branch on the first worker PR            | ✅ reusable |
+| `_fast-forward-queue.yml` | Lands the queue onto the integration branch             | ✅ reusable |
+| `_codeql.yml`             | CodeQL analysis                                         | ✅ reusable |
+| `_release-please.yml`     | Release PRs and tags                                    | ✅ reusable |
+| `_publish-npm.yml`        | npm publish — stable from the tag, prerelease from a branch | ✅ reusable |
+| `_publish-goreleaser.yml` | Signed Terraform provider artifacts                     | ✅ reusable |
+| `_ci-check.yml`           | The gate 11 repos run, derived from `package.json`       | ✅ reusable |
+| `_verified.yml`           | Has this tree already passed? — outputs `skip`           | ✅ reusable |
+| `_record-verified.yml`    | Marks a tree verified once the caller's jobs are green   | ✅ reusable |
+| `_detect-changes.yml`     | Which parts a PR touched — outputs `changes`             | ✅ reusable |
+| `_ci-node.yml`            | typecheck, test, build for Node libraries                | ✅ reusable |
+| `_ci-laravel.yml`         | Pest across PHP × Laravel, PostgreSQL, PCOV, Pint        | ✅ reusable |
+| `_ci-go.yml`              | gofmt, vet, golangci-lint, build, unit + acceptance      | ✅ reusable |
+| `_ci-tofu.yml`            | fmt, validate for OpenTofu                               | ✅ reusable |
+| `_ci-e2e.yml`             | Playwright against a real backend, with browser cache    | ✅ reusable |
+| `_ci-lighthouse.yml`      | Sharded Lighthouse audit, one runner per page            | ✅ reusable |
+| `_ci-rust.yml`            | Toolchain, cached build, fmt, clippy, tests, cargo-deny  | ✅ reusable |
+| `_coverage.yml`           | One sticky comment via `kirchDev/coverage-report`        | ✅ reusable |
 
-6. **First commit** — push a Conventional Commit on `main` (`feat: …`, `fix: …`). release-please opens the initial release PR; merge it and your first tagged release ships.
+`ci.yml` is the one workflow that does not become a single body. Its 24 variants are four families — 11 repos running one gate, 5 Node libraries, 2 Laravel packages, 3 Terraform providers — plus three repos with pipelines of their own. Every family now has its body, and the three outliers compose from the pieces rather than hand over their pipeline.
 
-## 💡 Why "scaffold" and not "template-\*"
+Two bodies were written **ahead of their second caller**, against this repo's usual rule. `app` has Lighthouse and no E2E; `gildstone` has E2E — already as a local `workflow_call` body — and no Lighthouse. They are the same gattung (Laravel plus a JS frontend), so each holds the half the other is missing. `oggsbreinig` is a third repo of that shape with no `ci.yml` yet, and `saas-template` exists to produce more. Waiting there would mean the third repo starts by copying eighty lines.
 
-Single word, brandable, language-neutral. Future stack-specific templates can sit next to it as `scaffold-laravel`, `scaffold-nuxt`, etc.
+What stays repo-owned: the **deploy jobs** in `app`, `infrastructure`, `linear-github-sync` and `discord-presence-bot`.
+
+</details>
+
+## ✨ Features
+
+- **🤖 Body and stub** — the trigger stays in the repo it fires in, the logic lives here. A stub is 8 lines and has nothing left to drift.
+- **🧭 Topology detection** — the promotion PR finds its own target by asking whether a `stage` branch exists. No flag, no second variant.
+- **🛡️ Pinned by SHA** — callers pin a commit, so a push here reaches nobody until a bump PR is reviewed and merged.
+- **🔐 Named secrets** — a stub hands over exactly what its body needs, never `secrets: inherit`.
+- **🧪 Dogfooded** — this repo carries the same stub as everyone else and calls its own bodies by local path, so a broken body fails here first.
+
+## 🔁 Promotion PR & branch topology
+
+The estate runs two branch flows, and `_promotion-pr.yml` detects which one it is in rather than being configured for it:
+
+| Push to | `stage` exists? | Draft PR opened |
+| :------ | :-------------- | :-------------- |
+| `dev`   | no              | `dev` → `main`  |
+| `dev`   | yes             | `dev` → `stage` |
+| `stage` | yes             | `stage` → `main` |
+
+**The branch topology is the configuration.** Creating a `stage` branch promotes a repo to the three-stage flow; deleting it demotes the repo back. Every repo keeps the same stub either way, which is what stops a second copied variant from existing.
+
+> [!TIP]
+> Mark the promotion PR ready and **merge it with a merge commit, never a squash**. Squashing collapses the individual `feat:`/`fix:` commits into the PR's own `chore:` title, and release-please then cuts nothing.
+
+If the topology changes while a promotion PR is open, the workflow warns on the run rather than retargeting a PR someone may already be reviewing. Retarget or close it by hand.
+
+## 🔒 Queue landing
+
+Two bodies carry the AI drain's queue: `_queue-branch.yml` cuts the branch the worker PRs are grouped behind, `_fast-forward-queue.yml` opens its PR and lands it by fast-forward once a human has approved it.
+
+Both derive what the old copies configured by hand:
+
+| Value | Old copies | Body |
+| :--- | :--- | :--- |
+| Integration branch | `env: INTEGRATION_BRANCH`, kept in step with the trigger by hand | read off the PR's base, or resolved from whether `dev` exists |
+| Bitwarden secret id | a literal per owner, wrong in four repos | `github.repository_owner` |
+| Queue branch prefix | `env:` in every copy, identical in all 47 | fixed in the body — estate policy, never per-repo |
+
+**The dispatch stays in the calling repo, and that is structural.** A reusable workflow cannot be dispatched — `workflow_call` is its only trigger — so the `workflow_dispatch` that lands a queue branch has to live in the stub. ADR-0008's human gate therefore provably remains in the repo it protects, while the 375 lines of picking, approval-checking and patching move here.
+
+<details>
+<summary>The fast-forward stub, and the check it adds</summary>
+
+```yaml
+# .github/workflows/fast-forward-queue.yml — the stub's job block
+jobs:
+  fast-forward-queue:
+    name: Fast-forward Queue
+    permissions:
+      contents: read
+      pull-requests: read
+      checks: read
+      statuses: read
+    uses: kirchDev/workflows/.github/workflows/_fast-forward-queue.yml@9f3c1a2 # v0.1.0
+    with:
+      pr: ${{ inputs.pr }}
+    secrets:
+      BWS_ACCESS_TOKEN: ${{ secrets.BWS_ACCESS_TOKEN }}
+```
+
+> [!IMPORTANT]
+> `_fast-forward-queue.yml` gained a `Resolve the integration branch` job that the old copies did not have — it is where the `env:` literal went. It reports as a new check, and the three jobs that follow it now depend on it.
+
+</details>
+
+## 🔐 Reference policy & secrets
+
+**Callers pin a commit SHA**, with the version as a trailing comment — the same way this repo pins `actions/checkout` and `bitwarden/sm-action`. Moving tags are published and work: every release moves `v<major>` onto itself, so `@v0` follows the newest `v0.x.y` exactly as `actions/checkout@v7` does. The stubs use a SHA anyway, and Dependabot raises the bumps — the alias exists for callers who want the other trade.
+
+That review gate is the point. `queue-branch.yml` and `fast-forward-queue.yml` read a PEM from Bitwarden and mint a GitHub App token whose entire purpose is bypassing merge gates on integration branches. On a moving ref, write access to this repo would be unreviewed write access to every repo in the estate.
+
+**Secrets are named, never inherited.** A stub passes exactly what its body needs, one key at a time — as the queue and release stubs on this page do. `secrets: inherit` would hand a body everything the calling repo holds — including secrets added long after anyone read the stub.
+
+> [!NOTE]
+> The Bitwarden **secret ids** in the workflow bodies are vault identifiers, not credentials: they name an entry that only `BWS_ACCESS_TOKEN` can open, and that token is a GitHub secret which never appears in a file.
+>
+> The id differs per owner, so every body derives it from `github.repository_owner` rather than carrying a literal. That is not tidiness: as a literal it was wrong in **four repos for the Queue App and two more for the Release App** — a mismatch resolves for nobody, silently, until someone dispatches the workflow. Deriving it makes the error impossible.
+
+## 🔍 CodeQL
+
+One body, one pin. The 15 copies it replaces differed in almost nothing else: `v4`, `v4.37.3`, `v4.37.4`, `v4.37.8`, `v4.37.9` and a raw SHA were all in circulation for the same two steps.
+
+The one real axis is the language set, so it is the one input:
+
+```yaml
+jobs:
+  codeql:
+    uses: kirchDev/workflows/.github/workflows/_codeql.yml@9f3c1a2 # v0.1.0
+    with:
+      languages: '["actions", "go", "javascript-typescript"]'
+```
+
+Omit `languages` for the default `["actions", "javascript-typescript"]`. Adding `go` is enough on its own — the body switches that language to `build-mode: autobuild` and runs `setup-go`, because CodeQL rejects `none` for Go. In the copied files, adding Go meant forking the whole workflow.
+
+## 🏷️ Releases
+
+`_release-please.yml` opens the release PR and cuts the tag under the kirchDev Release App. **Publishing is a separate body per target**, composed by the caller — because 10 of the 22 repos publish nothing at all, and npm and GoReleaser need different secrets:
+
+```yaml
+jobs:
+  release-please:
+    permissions:
+      contents: write
+      pull-requests: write
+    uses: kirchDev/workflows/.github/workflows/_release-please.yml@9f3c1a2 # v0.1.0
+    secrets:
+      BWS_ACCESS_TOKEN: ${{ secrets.BWS_ACCESS_TOKEN }}
+
+  publish:
+    needs: release-please
+    if: needs.release-please.outputs.release-created == 'true'
+    uses: kirchDev/workflows/.github/workflows/_publish-npm.yml@9f3c1a2 # v0.1.0
+    with:
+      tag-name: ${{ needs.release-please.outputs.tag-name }}
+    secrets:
+      NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+```
+
+<details>
+<summary>Which publish body a repo composes on, and the prerelease fix</summary>
+
+Which body a repo composes on:
+
+| Target | Repos | Body | Passes |
+| :--- | ---: | :--- | :--- |
+| nothing | 10 | — | — |
+| npm | 4 | `_publish-npm.yml` | `tag-name`, `NPM_TOKEN` |
+| Terraform registry | 3 | `_publish-goreleaser.yml` | `tag-name`, `BWS_ACCESS_TOKEN` |
+| a deployment | 4 | own job | — |
+
+> [!IMPORTANT]
+> Two of the four npm repos were missing the prerelease-version fix the other two carry: because release-please bumps the version on `main` only, a `dev` branch published a version semver ranked **below** the latest release, so `@dev` resolved to something older than `@latest`. The body derives the base from the last published release instead. Migrating `forgemap` and `envprism` onto it is a fix, not a port.
+
+The prerelease job is a second call with `prerelease: true`; it gates itself on the branch rather than on `release-created`.
+
+</details>
+
+## 🧪 CI
+
+CI is the one place where a body is a **job**, not a whole workflow. A single body with `run-test`, `run-coverage`, `needs-postgres` switches would turn every stub into a config file — and a value the caller maintains is a copy, which is the thing this repo exists to remove.
+
+For the 11 Node repos whose CI is a set of checks, the stub is two lines of job:
+
+```yaml
+jobs:
+  check:
+    name: CI
+    uses: kirchDev/workflows/.github/workflows/_ci-check.yml@9f3c1a2 # v0.1.0
+```
+
+**The check list is derived, not listed.** Each repo already declares its checks in `package.json`, in order — `"check": "pnpm lint && pnpm format && pnpm typecheck && pnpm check:policy"` — and the copied workflows listed those same commands a second time as steps. The body splits the gate script into its `pnpm <task>` calls and runs each as its own step of a single job, which reports as `CI / Lint & Format`.
+
+<details>
+<summary>Resolving the gate script, the tree-hash markers, and extending a body that almost fits</summary>
+
+It resolves recursively, because a gate can chain another aggregate — `skills` runs `verify`, which calls `check`, which is `lint && format`:
+
+| Repo | Resolved checks |
+| :--- | :--- |
+| `meta` | lint, format, typecheck, **validate** |
+| `gitignore-sync` | lint, format, typecheck, **check:policy**, test |
+| `skills` | lint, format, **skills:check**, typecheck, test |
+
+The repo-specific ones come along without being listed anywhere here. Adding a check stays a `package.json` edit that CI picks up with no workflow change.
+
+A repo whose gate lives under another name passes it:
+
+```yaml
+    with:
+      gate-script: verify
+```
+
+### Adding a check needs no workflow change
+
+Because the job list comes from the gate script, a repo adds a check by editing `package.json` alone. The `.gitignore` drift check is the worked example:
+
+```jsonc
+"gitignore:check": "gitignore-sync check",
+"check": "pnpm lint && pnpm format && pnpm typecheck && pnpm gitignore:check"
+```
+
+`_ci-check.yml` resolves the gate, finds `gitignore:check` and runs it with its own log group and its own error line — the same mechanism that carries `validate`, `check:policy` and `skills:check`. Nothing here is listed anywhere in this repo.
+
+> [!NOTE]
+> That check deliberately gets **no body of its own**. A body earns its place by encapsulating a job *environment* — permissions that are easy to get wrong, artifacts moving between jobs, or several implementations converging into one, which is what `_coverage.yml` does. [`kirchDev/gitignore-sync`](https://github.com/kirchDev/gitignore-sync) needs `contents: read` and returns an exit code, and it already ships its own composite action for the two repos with no gate script. A body would be a file calling an action calling a CLI.
+
+**One job, one step per check — not a matrix.** Jobs share nothing: separate runner, separate filesystem, separate `node_modules`. Fanning four ten-second tasks over four jobs means four checkouts and four installs, which for a one-to-two-minute run makes it slower and burns four runners instead of one. Each task gets its own log group and its own error line instead, so a red build still names the check that failed. The matrix earns its overhead in the Laravel and Go bodies, where a single job runs for minutes and where `test` should be a required check on its own.
+
+### Skipping work that cannot fail
+
+Two bodies cut runtime without touching a pipeline. They are complementary — one skips a run whose bytes already passed, the other skips jobs a change cannot affect:
+
+```yaml
+jobs:
+  verified:
+    uses: kirchDev/workflows/.github/workflows/_verified.yml@9f3c1a2 # v0.1.0
+
+  check:
+    needs: verified
+    if: needs.verified.outputs.skip != 'true'
+    uses: kirchDev/workflows/.github/workflows/_ci-check.yml@9f3c1a2 # v0.1.0
+
+  record-verified:
+    needs: [verified, check]
+    if: needs.check.result == 'success'
+    uses: kirchDev/workflows/.github/workflows/_record-verified.yml@9f3c1a2 # v0.1.0
+    with:
+      tree: ${{ needs.verified.outputs.tree }}
+```
+
+The marker keys on the **tree hash**, so it names the content rather than the commit — two commits share a marker only when every byte matches. It is a git ref, not `actions/cache`, because the cache is branch-scoped and a marker written on `dev` would be invisible on `stage`. It fails open: no answer means a full run, never a skipped one.
+
+**Which jobs the marker stands for is the caller's decision** — that is why `record-verified` takes its `if:` in the stub. Gating it on lint alone would record a tree as verified that was never tested.
+
+### When a body almost fits
+
+A body is taken whole or not at all — there is no way to override one step. For that case each Node body's setup also exists as a composite action, which runs **in your own job**:
+
+```yaml
+jobs:
+  custom:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: kirchDev/workflows/.github/actions/setup-node-pnpm@9f3c1a2 # v0.1.0
+      - run: pnpm something-only-this-repo-does
+```
+
+So a repo that needs a body plus one extra step writes its own job instead of forking the body.
+
+> [!NOTE]
+> The bodies here deliberately do **not** use that action. A reusable workflow resolves `./…` against the **caller's** workspace rather than its own repository, so a body would have to name `kirchDev/workflows/…@<ref>` in full — and `uses:` takes no expression, so that ref would be hard-coded. A caller pinning the body to one SHA would then silently run an action from another. Four duplicated setup lines are cheaper than a pin that lies.
+
+</details>
 
 ## 🤝 Contributing
 
@@ -115,6 +336,8 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for the full workflow.
 ## 🛣️ Versioning
 
 [Semantic Versioning](https://semver.org/) via [release-please](https://github.com/googleapis/release-please) — see [CHANGELOG.md](CHANGELOG.md).
+
+Here the tags are the interface: every caller pins one, so a release is never cosmetic and a tag is never moved or deleted once published.
 
 ## 📄 License
 

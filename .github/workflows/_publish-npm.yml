@@ -1,0 +1,144 @@
+# yaml-language-server: $schema=https://json.schemastore.org/github-workflow.json
+
+name: Publish npm (reusable)
+
+# Reusable body for the four repos that ship an npm package. The caller runs it
+# after `_release-please.yml`, gated on that body's `release-created` output for
+# the stable publish; the prerelease job gates itself on the branch.
+#
+# The four copies this replaces had identical step structure — checkout, pnpm,
+# setup-node, install, build, publish — and differed in their action pins, one
+# build script, and ONE FIX that only two of them carried. See the comment on
+# `Compute prerelease version`.
+on:
+  workflow_call:
+    inputs:
+      tag-name:
+        description: Tag to publish from, from release-please's `tag-name` output. Required for the stable publish.
+        required: false
+        type: string
+        default: ''
+      build-script:
+        description: >-
+          The pnpm script that builds the npm artifact. `coverage-report` needs
+          `build:npm` because its `build` writes the Action bundle instead.
+        required: false
+        type: string
+        default: build
+      node-version:
+        description: Node version to publish under.
+        required: false
+        type: string
+        default: '24'
+      prerelease:
+        description: Publish a prerelease from this branch instead of a stable release from the tag.
+        required: false
+        type: boolean
+        default: false
+    secrets:
+      NPM_TOKEN:
+        description: >-
+          Legacy npm automation token. OPTIONAL, and unused by every repo in the
+          estate — all four publish through Trusted Publishing instead. Pass it
+          only for a package whose npm side is not configured for OIDC.
+        required: false
+
+jobs:
+  publish:
+    name: ${{ inputs.prerelease && 'Publish prerelease' || 'Publish stable release' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # NOT ONLY FOR PROVENANCE: every package in the estate publishes through
+      # npm TRUSTED PUBLISHING, where npm verifies this workflow against the
+      # trusted publisher configured on the package and issues a short-lived
+      # credential. There is no NPM_TOKEN anywhere, which is the point — a token
+      # that does not exist cannot leak. `--provenance` signs through the same
+      # OIDC identity.
+      id-token: write
+    steps:
+      # A stable publish takes the tag release-please just cut; a prerelease
+      # takes the branch it was triggered on.
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.prerelease && github.ref || inputs.tag-name }}
+
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ inputs.node-version }}
+          cache: pnpm
+          registry-url: https://registry.npmjs.org
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build
+        env:
+          BUILD_SCRIPT: ${{ inputs.build-script }}
+        run: pnpm run "$BUILD_SCRIPT"
+
+      # THE BASE IS THE LAST PUBLISHED RELEASE, NOT THIS BRANCH'S package.json.
+      # release-please writes its version bump onto main and onto main alone, so
+      # a dev branch keeps whatever version it carried when it last forked, long
+      # after the release shipped. Reading package.json off the branch therefore
+      # published a version semver ranks BELOW the latest release, and `@dev`
+      # resolved to something older than `@latest`. Deriving the base from the
+      # release instead makes the prerelease version independent of whether main
+      # was ever merged back down.
+      #
+      # TWO OF THE FOUR COPIES NEVER GOT THIS FIX. Centralising is what carries
+      # it to the other two — the same shape as the three repos stuck on the
+      # 189-line queue workflow.
+      - name: Compute prerelease version
+        id: version
+        if: inputs.prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REF_NAME: ${{ github.ref_name }}
+          RUN_NUMBER: ${{ github.run_number }}
+        run: |
+          set -euo pipefail
+
+          if [ "$REF_NAME" = "main" ]; then
+            TAG=dev-main
+          else
+            TAG=dev
+          fi
+
+          # No release yet -- a repo fresh out of the template, whose 0.0.0
+          # manifest entry means "never released" -- leaves this empty, so fall
+          # back to the branch's own version. `|| true` because `gh release
+          # view` exits non-zero on an empty release list under `set -e`.
+          LATEST=$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName --jq '.tagName' 2>/dev/null || true)
+          LATEST=${LATEST#v}
+          if [ -z "$LATEST" ]; then
+            LATEST=$(node -p "require('./package.json').version")
+          fi
+
+          # Patch-bump the base so the prerelease sorts ABOVE the release it
+          # follows: dev carries commits made after that release, and
+          # 0.2.0-dev.N would rank below 0.2.0 while 0.2.1-dev.N ranks above it.
+          BASE=$(node -e 'const [a,b,c]=process.argv[1].split("-")[0].split(".").map(Number);console.log(`${a}.${b}.${c+1}`)' "$LATEST")
+
+          SHORT_SHA=${GITHUB_SHA::7}
+          NEW_VERSION="${BASE}-${TAG}.${RUN_NUMBER}-${SHORT_SHA}"
+          npm version --no-git-tag-version --allow-same-version "$NEW_VERSION"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+      # NODE_AUTH_TOKEN is set only when a caller actually passed one; with
+      # Trusted Publishing it stays empty and npm falls back to the OIDC
+      # exchange. Exporting an empty NODE_AUTH_TOKEN would break that exchange,
+      # so the variable is absent rather than blank.
+      - name: Publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          PUBLISH_TAG: ${{ inputs.prerelease && steps.version.outputs.tag || 'latest' }}
+        run: |
+          if [ -z "${NODE_AUTH_TOKEN:-}" ]; then
+            unset NODE_AUTH_TOKEN
+          fi
+
+          pnpm publish --access public --provenance --no-git-checks \
+            --tag "$PUBLISH_TAG"

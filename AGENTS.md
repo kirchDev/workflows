@@ -16,9 +16,16 @@ Retyping a change is exactly how the two drift; one reflowed line or reworded cl
 
 ## What this repo is
 
-`scaffold` is a **GitHub template repository**, not an application. It ships the meta layer (lint, format, commit hooks, CI, CodeQL, Dependabot, release-please, issue/PR templates, standard meta docs) that every new kirchDev repo should start with. There is no application code — the project code can be anything (PHP, Go, Rust, Vue, shell). Only the meta layer lives here.
+`workflows` holds the estate's **central reusable GitHub Actions workflow bodies**. Every other repo carries a thin caller stub — `uses: kirchDev/workflows/.github/workflows/<name>.yml@<sha>` — instead of its own copy of the body. Fix once here, every repo picks it up on its next bump. There is no application code; the workflows _are_ the product.
 
-Implication: when changing files, ask "does this default make sense for _every_ future repo created from this template?" — not just for one project type.
+The problem it solves, measured across the 27 repos of both owners: `dev-pr.yml` was byte-identical in 20 of them, `fast-forward-queue.yml` appeared in 26 repos as 8 variants, `queue-branch.yml` in 23 as 6, `codeql.yml` in 18 as 15, and `ci.yml` in 25 as 24 — effectively unique per repo. Copies drift; a call does not.
+
+The variant counts overstate the real divergence, and that is the useful part: `fast-forward-queue.yml`'s 8 variants come down to **three values and one stale copy** — `INTEGRATION_BRANCH` (`main` vs `dev`), the per-owner Bitwarden id, `runs-on` on two repos, and three repos still on a 189-line version missing the App-token steps entirely. The first two are derivable from the repo itself, the third is a runner label, and the fourth is not a variant but a backlog. That is why one body can serve all of them.
+
+Implication when changing a body: it runs in **every** calling repo, not just this one. Ask what a repo that is on a different branch topology, a different runner, or a different stack does with the change — and remember that a body's blast radius is the whole estate, which is why the reference policy below is not a formality.
+
+> [!IMPORTANT]
+> This repo was generated from `TitusKirch/scaffold`, so it still ships copies of the very files it exists to centralise. They are the raw material, not the product. As each body moves to a `workflow_call` shape, this repo's own copy becomes a caller of itself — see _Bodies and callers_ below.
 
 ## Commands
 
@@ -28,7 +35,8 @@ Implication: when changing files, ask "does this default make sense for _every_ 
 | `pnpm lint`         | `oxlint . --deny-warnings`                                 |
 | `pnpm format`       | `oxfmt --check .` (note: `format` is the check, not fix)   |
 | `pnpm typecheck`    | `tsc --noEmit` over the meta scripts                       |
-| `pnpm check`        | Runs `lint` + `format` + `typecheck` + `check:policy` — the CI gate |
+| `pnpm check`        | Runs `lint` + `lint:actions` + `format` + `typecheck` + `check:policy` — the CI gate |
+| `pnpm lint:actions` | `actionlint` over every workflow, via Docker                |
 | `pnpm check:policy` | Proves the two agent policy files ban the same commands    |
 | `pnpm lint:fix`     | Auto-fix lint                                              |
 | `pnpm format:fix`   | Auto-fix format                                            |
@@ -37,17 +45,20 @@ Implication: when changing files, ask "does this default make sense for _every_ 
 | `pnpm taze`         | Interactive dependency upgrade check                       |
 | `pnpm taze:w`       | Write upgrade results                                      |
 
-There is no test suite — this is config-only. CI runs `pnpm lint`, `pnpm format`, `pnpm typecheck` and `pnpm check:policy` on PR.
+There is no test suite — this is config-only. CI derives its checks from the `check` script, so adding one there is enough.
+
+**`lint:actions` needs Docker**, which is why it is the one check that cannot run without it. `actionlint` ships no npm package, and the workflows are this repo's product — leaving them unchecked while `tsc` guards four meta scripts would be the wrong way round. Three shellcheck rules are silenced via `SHELLCHECK_OPTS` and each is deliberate: `SC2016` (a `node -e` script in single quotes, which must not expand), `SC2086` (word splitting is the point in the task loop), `SC2129` (style, inherited from the originals).
 
 ## Architecture / conventions
 
 - **Node 24, pnpm 11.** Pinned via `.nvmrc`, `engines`, and `packageManager`. `pnpm-workspace.yaml` enforces `minimumReleaseAge=4320` (3-day cooldown), isolated node-linker. Don't loosen these without reason. Package-manager enforcement carries no key on purpose: pnpm 11 replaced `packageManagerStrict`/`packageManagerStrictVersion` with `pmOnFail`, whose default `download` already errors on a foreign package manager and fetches the pinned pnpm version — every other value only weakens it, so leave it unset (the rationale sits as a comment in the file).
 - **oxc, not eslint/prettier.** Linting via `oxlint`, formatting via `oxfmt`. Configs live in `.oxlintrc.json` / `.oxfmtrc.json`. `oxlint` uses `unicorn` + `oxc` plugins; rules deliberately minimal.
-- **TypeScript, no build step.** The meta scripts and the three tool configs are `.ts` — Node 24 strips types natively, so `scripts/check-policy-parity.ts`, `commitlint.config.ts`, `lint-staged.config.ts` and `taze.config.ts` stay directly executable and each tool loads its own `.ts` config unaided. `tsconfig.json` is `noEmit` + `strict` + `erasableSyntaxOnly`, so only strippable syntax (no enums, no parameter properties) can be written; `pnpm typecheck` is the gate. TypeScript is a devDependency of the template's meta layer only — a downstream PHP, Go or Rust repo inherits it for that and nothing else, and drops it by deleting `tsconfig.json`, the `typecheck` script and the four `.ts` files' types.
+- **TypeScript, no build step.** The meta scripts and the three tool configs are `.ts` — Node 24 strips types natively, so `scripts/check-policy-parity.ts`, `commitlint.config.ts`, `lint-staged.config.ts` and `taze.config.ts` stay directly executable and each tool loads its own `.ts` config unaided. `tsconfig.json` is `noEmit` + `strict` + `erasableSyntaxOnly`, so only strippable syntax (no enums, no parameter properties) can be written; `pnpm typecheck` is the gate. TypeScript covers the meta layer only — there is no application code here, and the workflows themselves are YAML, which `tsc` never sees. Checking them is `actionlint`'s job.
 - **Husky hooks** (`.husky/pre-commit`, `.husky/commit-msg`) run `lint-staged` and `commitlint`. `lint-staged.config.ts` excludes `README.md`, `CLAUDE.md`, and `AGENTS.md` (free-form prose) and `pnpm-lock.yaml`. `oxlint --fix --deny-warnings` then `oxfmt` on JS/TS; `oxfmt` only on JSON/YAML/MD.
 - **Conventional Commits enforced** via `@commitlint/config-conventional`. Don't `--no-verify` unless explicitly asked.
-- **release-please is included** (unlike many templates that omit it). Files: `release-please-config.json`, `.release-please-manifest.json`, `.github/workflows/release-please.yml`. Config uses `release-type: simple` (language-agnostic), `include-v-in-tag: true`. Downstream repos start at `0.0.0` and reset via the steps in README → _Resetting release-please_.
-- **Workflows** use `actions/checkout@v6`, `actions/setup-node@v6`, `pnpm/action-setup@v6`, `github/codeql-action/{init,analyze}@v4`. Keep these pinned to major versions; Dependabot bumps them monthly.
+- **The moving major alias is opt-in, and off by default.** Confirmed in production: `gitignore-sync` cut `v0.1.0` and its `v0` tag moved onto it. release-please cuts exact tags only — `v0.1.0`, never `v0` — so `_release-please.yml` can move `v<major>` onto each release itself, force-pushing that one tag. Moving a tag is normally the thing not to do; an alias is the case where moving it *is* the contract, since it names a major line rather than a release. But **only two repos in the estate have anyone pinning their tags** — this one and `coverage-report` — so the default is `false`: for an npm package the npm version is what resolves, and for the three Terraform providers an extra `v1` is a hazard rather than a no-op, since the Registry reads tags as its version list and `v1` is not valid semver.
+- **release-please cuts the tags callers pin.** Files: `release-please-config.json`, `.release-please-manifest.json`, `.github/workflows/release-please.yml`. Config uses `release-type: node` with `include-v-in-tag: true`, bumping a `"private": true` `package.json` that is never published — the version exists to name the tag. Open point inherited from the build brief: `simple` would be the language-neutral choice and would stop pretending there is a package. Either is defensible; what is not is changing it after callers have pinned tags.
+- **Action pins are mixed on purpose, and the split matches the one callers use.** Anything that touches a credential is pinned to a **full commit SHA** with the version as a trailing comment — `bitwarden/sm-action`, `actions/create-github-app-token`, `googleapis/release-please-action`, `pnpm/action-setup`. The rest ride a major tag: `actions/checkout@v7`, `actions/setup-node@v7`, `github/codeql-action/{init,analyze}@v4.37.9`. Dependabot bumps both monthly. Estate-wide these have drifted badly — `actions/checkout` alone appears as `v7`, `v6`, `v3` and a raw SHA across the 27 repos — which is one more thing centralising the bodies fixes by deletion.
 - **CodeQL** scans `actions` + `javascript-typescript` with `security-extended,security-and-quality` queries, gated by path filters so non-code changes don't trigger it.
 - **Dependabot** groups all minor/patch updates per ecosystem into a single PR (`npm-minor-patch`, `actions-minor-patch`). Majors come as separate PRs.
 
@@ -74,7 +85,7 @@ The line to draw is **the machine or something remote, not the working copy**. B
 
 Two things this file cannot do, by design: it cannot tell which branch a `git push` targets (protect release branches with **branch protection**, not permissions), and prefix rules miss flags placed before the subcommand (`docker compose -f x.yml down -v`). Treat it as lowering the odds, not as a guarantee.
 
-Downstream repos keep the `deny` list as-is and swap the `pnpm` lines in `allow` for whatever their stack runs.
+Other repos in the estate keep the `deny` list as-is and swap the `pnpm` lines in `allow` for whatever their stack runs.
 
 **Codex gets the same policy** in `.codex/rules/default.rules` — permission config is not portable, so the block list exists twice and **both must be changed together**. Codex uses Starlark `prefix_rule()` calls matching on argument *tokens*, which handles flags and shell chains that the `Bash(…)` prefix patterns miss, and every rule carries its own `match`/`not_match` cases. Check a rule with:
 
@@ -89,41 +100,157 @@ codex execpolicy check --pretty --rules .codex/rules/default.rules -- git push -
 
 ## Branching model
 
-The default here is a **`dev` integration branch**: branch off `dev`, PR into `dev`, roll `dev` up into `main`, and release-please releases from `main`. That is what most kirchDev repos run, so the template runs it too — a variant that ships switched off is a variant nobody notices is broken.
+This repo runs a **`dev` integration branch**: branch off `dev`, PR into `dev`, roll `dev` up into `main`, and release-please releases from `main`.
+
+`.github/workflows/promotion-pr.yml` calls this repo's own `_promotion-pr.yml` body to open and update the rolling draft promotion PR. Mark that PR ready and **merge it with a merge commit, never a squash**: squashing collapses the individual `feat:`/`fix:` commits into the PR's own `chore:` title, and release-please then cuts nothing — which here means callers get no tag to bump to.
+
+The estate also has a three-stage variant, `dev → stage → main`, used by repos that deploy into a staging environment. The `_promotion-pr.yml` body serves both: it asks whether a `stage` branch exists and picks the target accordingly (see the table under _Bodies and callers_). This repo is on the two-stage flow, and creating a `stage` branch here would move it to the three-stage flow without any file changing — which is exactly the property the design is after, and exactly why it is worth stating out loud.
+
+`ci.yml` and `codeql.yml` list both `main` and `dev` in their `on: branches:` filters. Without `dev` in `ci.yml`, PRs into `dev` (Dependabot's included) would run no CI at all.
+
+## Visibility
+
+**This repo is public, and that is load-bearing rather than a preference.** A private repo's reusable workflows are callable only from repos owned by the same account, and only from private ones at that. Half the estate lives under `TitusKirch/*`, a personal account rather than the `kirchDev` org, and several kirchDev repos are public — so a private `workflows` could not be called by either group. Public is what makes the call path work at all.
+
+What follows from being public: `LICENSE` stays MIT with the `[MIT](LICENSE) © …` README footer, `codeql.yml` works (GitHub Advanced Security is free on public repos), and `.github/ISSUE_TEMPLATE/config.yml` may keep its Discord forum links.
 
 > [!IMPORTANT]
-> A repo created from this template has the `dev` config but **no `dev` branch**. Create it before the first Dependabot run: with `target-branch: 'dev'` pointing at a branch that doesn't exist, Dependabot opens nothing at all. Going main-only (below) is a deliberate step too — leaving the config untouched is the one option that silently does nothing.
-
-`.github/workflows/dev-pr.yml` opens and updates the rolling draft `dev` → `main` PR. Mark that PR ready and **merge it with a merge commit, never a squash**: squashing collapses the individual `feat:`/`fix:` commits into the PR's own `chore:` title, and release-please then cuts nothing.
-
-Going **main-only** is three edits, all of them removals:
-
-```bash
-rm .github/workflows/dev-pr.yml
-# .github/dependabot.yml    — drop both `target-branch: 'dev'` lines
-# .tituskirch-skills.json   — set `pr.base` to "main"
-```
-
-Nothing is vendored for this. A variant worth shipping as files is one that *adds* something — content that would otherwise be lost, the way `dev-pr.yml` itself would be. A variant that only deletes has nothing to preserve, so it stays documented, exactly like _Public vs private repos_ below.
-
-`ci.yml` and `codeql.yml` list both `main` and `dev` in their `on: branches:` filters and neither edit touches them. A filter naming a branch that doesn't exist is a no-op, so it costs a main-only repo nothing — and without `dev` in `ci.yml`, PRs into `dev` (Dependabot's included) would run no CI at all.
-
-Variants that are *purely* deletions — see _Public vs private repos_ below — stay documented rather than vendored; only this one earns the folder.
-
-## Public vs private repos
-
-Some meta defaults only make sense for one visibility. When spinning up a repo from this template, adjust for its visibility:
-
-- **CodeQL / code scanning** (`.github/workflows/codeql.yml`) depends on GitHub Advanced Security. It's free on **public** repos; on a **private** repo without a GHAS license it won't run — delete `codeql.yml` (and the CodeQL note above) rather than leave a dead workflow. The same goes for other GHAS-gated features (secret scanning, etc.). Dependabot version updates work on both.
-- **License.** A **public** repo ships MIT: keep `LICENSE` and the `[MIT](LICENSE) © …` README footer. A **private** repo is proprietary: remove/replace `LICENSE`, drop the MIT footer, and set `package.json` to `"license": "UNLICENSED"` (keep `"private": true`).
-- **Discord forum links.** `.github/ISSUE_TEMPLATE/config.yml` points questions, ideas and possible bugs at the repo's Discord forum (each open-source repo gets one, provisioned from the `infrastructure` repo's OpenTofu). Confirmed bugs and features stay as the GitHub issue forms. A **private** repo has no forum — drop the `contact_links` block; if you still want an in-repo Q&A path, restore a simple `question.yml`.
+> Public means the workflow bodies are world-readable. That is fine — they contain no credentials. What they do contain are **Bitwarden secret ids** (`df8b447a-…`), which are vault identifiers, not secrets: they name an entry that only `BWS_ACCESS_TOKEN` can open, and that token is a GitHub secret which never appears in a file. The id is per-owner, so a body must use the id matching `github.repository_owner` or the lookup silently resolves for nobody.
 
 ## House style for READMEs and meta files
 
 `/write-readme` skill encodes the canonical structure. Key rules: hero block wrapped in `<div align="center">`, prescribed section emojis (✨ Features, 🚀 Setup, 🤝 Contributing, 🛣️ Versioning, 📄 License), license footer always reads `[MIT](LICENSE) © [Titus Kirch](https://github.com/TitusKirch/) / [IT-Dienstleistungen Titus Kirch](https://kirch.dev)`. Use GitHub callouts (`> [!TIP]`, `> [!IMPORTANT]`), never plain blockquotes.
 
-## When editing this template
+## Bodies and callers
 
-- Every file referencing `TitusKirch/scaffold` is a placeholder that downstream users will replace. Keep the references consistent so a single `grep -rn "TitusKirch/scaffold"` catches them all.
-- `forgemap` (sibling repo at `../forgemap`) is the de-facto reference implementation of these conventions. When unsure about a config choice, check what forgemap does.
-- The template's own `package.json` is `"private": true` and `"name": "scaffold"` — not published anywhere.
+A **body** lives in `.github/workflows/_<name>.yml` here and is triggered only by `on: workflow_call`. A **caller stub** lives in every repo — this one included — as `.github/workflows/<name>.yml`, carries the real trigger (`on: push`, `on: workflow_dispatch`), and does nothing but `uses:` the body.
+
+The `_` prefix is the estate convention (`gildstone` already uses it for `_test-node.yml` and friends). It marks a file that never runs on its own, keeps the bodies together in the Actions sidebar, and — the actual reason — lets this repo's own stub carry the same filename as everybody else's.
+
+```yaml
+# any repo — .github/workflows/promotion-pr.yml, complete
+name: Dev PR
+on:
+  push:
+    branches: [dev, stage]
+jobs:
+  promotion-pr:
+    uses: kirchDev/workflows/.github/workflows/_promotion-pr.yml@<sha> # v0.1.0
+```
+
+Four rules govern the boundary, and each one was decided rather than defaulted:
+
+- **Callers pin a commit SHA**, with the version as a trailing comment — exactly how this repo already pins `actions/checkout` and `bitwarden/sm-action`. Moving tags (`@v1`) are published and supported, but a SHA is what the stubs use. Bumps arrive as Dependabot PRs, which is the review gate: write access here would otherwise be unreviewed write access everywhere a body mints a token.
+- **Secrets are named, never inherited.** A stub passes exactly what its body needs (`BWS_ACCESS_TOKEN: ${{ secrets.BWS_ACCESS_TOKEN }}`), so a body never sees a secret a repo acquires later. `secrets: inherit` is not used.
+- **`runs-on` is hardcoded to `ubuntu-latest` in the body.** A caller job may not set `runs-on` at all — GitHub allows only `name`, `uses`, `with`, `secrets`, `strategy`, `needs`, `if`, `concurrency` and `permissions` there. Making the runner an input is possible and is the conventional escape hatch, but no body needs it yet.
+- **Configuration is derived, not passed.** Where a body can read the answer from the repo it runs in — the branch topology, the owner — it does, instead of taking an input the caller has to keep correct. That is the whole point: an input a caller must maintain is a copy, and copies drift.
+
+The estate has **two branch topologies**, and bodies detect which one they are in rather than being told:
+
+| Push to | `stage` exists? | Promotion PR opened |
+| :------ | :-------------- | :------------------ |
+| `dev`   | no              | `dev` → `main`      |
+| `dev`   | yes             | `dev` → `stage`     |
+| `stage` | yes             | `stage` → `main`    |
+
+Creating a `stage` branch promotes a repo to the three-stage flow; deleting it demotes the repo back. No flag, no second variant, and every repo keeps the same stub either way.
+
+## This repo's own workflows
+
+A body has no trigger of its own, so this repo needs a stub like anybody else. Its stubs are the **same files other repos carry, under the same names** — `promotion-pr.yml` calls `_promotion-pr.yml` — differing only in that `uses:` takes a local path (`./.github/workflows/_promotion-pr.yml`) instead of `owner/repo@ref`, which means it always runs the body as it exists in that commit. A broken body therefore fails here before it reaches anyone else.
+
+## Migration status
+
+| Body                     | Repos today | Variants | Real divergence                                          | State       |
+| :----------------------- | ----------: | -------: | :-------------------------------------------------------- | :---------- |
+| `_promotion-pr.yml`      |          20 |        2 | runner label only                                          | ✅ reusable |
+| `_queue-branch.yml`      |          23 |        6 | `INTEGRATION_BRANCH`, owner id, runner                     | ✅ reusable |
+| `_fast-forward-queue.yml` |         26 |        8 | same three, plus 3 repos on a 189-line copy missing 2 steps | ✅ reusable |
+| `_codeql.yml`            |          18 |       15 | action pins, plus the language set (one input)              | ✅ reusable |
+| `_release-please.yml`    |          22 |       18 | owner id, plus per-repo publishing (split into its own bodies) | ✅ reusable |
+| `_publish-npm.yml`       |           4 |        4 | action pins, one build script, and a fix 2 of 4 never got   | ✅ reusable |
+| `_publish-goreleaser.yml` |          3 |        3 | two action pins and a wrong comment                         | ✅ reusable |
+| `_ci-check.yml`          |          11 |        ~8 | pins, and a step list that duplicates `package.json`       | ✅ reusable |
+| `ci.yml` (families)      |          14 |       16 | genuinely stack-dependent — one body per family            | 📋 next     |
+
+**Variant counts overstate divergence.** Every one of the queue workflows' variants reduces to values the body can derive for itself: `INTEGRATION_BRANCH` from whether `dev` exists, the Bitwarden id from `github.repository_owner`. Neither becomes an input — an input a caller maintains is a copy, and copies drift.
+
+**Three repos are behind, not different.** `coverage-report`, `vite-plugin-iconify-bundle` and `TitusKirch/hike-recap` carry a 189-line `fast-forward-queue.yml` with no `Fetch Queue App PEM` / `Mint Queue App token` / `Open the queue PR as the App` steps. Migrating them is a fix, not a port.
+
+**How the queue bodies derive their two per-repo values.** `_queue-branch.yml` reads the integration branch off `github.event.pull_request.base.ref` — the caller's `branches:` filter already decided which PRs reach it, so the name exists once, in the trigger. `_fast-forward-queue.yml` cannot do that (a queue-branch push, a review and a dispatch all name the head, never the base), so it resolves the branch in a `resolve` job that asks whether `dev` exists, and the other three jobs take it via `needs`. Both read the Bitwarden id from `github.repository_owner`. That new `resolve` job is a new check name — see the job-names warning above.
+
+**A second wrong secret id, in a place the build brief never looked.** The brief flagged three `KIRCHDEV_QUEUE_APP_PEM` references pointing at the wrong owner's vault entry. The same measurement over `release-please.yml` found `KIRCHDEV_RELEASE_APP_PEM` doing it too: TitusKirch's 7 repos agree, kirchDev's split 13 to 2, and the two outliers — this repo and `gitignore-sync` — carry TitusKirch's id. Both bodies now derive the id from `github.repository_owner`, so the class of error is gone rather than the instances fixed. Both outliers have since been corrected — this repo by deriving the id, `gitignore-sync` in its own copy — so no instance is known to remain. A literal that has to be right in 22 places stays a class of error regardless of how many currently are.
+
+**Publishing is one body per target, not one body with switches.** Ten of the 22 repos with `release-please.yml` publish nothing; a combined body would force inputs and secrets on them that they have no use for, and npm's `NPM_TOKEN` and GoReleaser's Bitwarden-held GPG key would both have to be optional, erasing the signal of which one a repo actually needs. The caller composes instead: `release-please` → `publish`, gated on `release-created`. The four deploy repos (`app`, `infrastructure`, `linear-github-sync`, `discord-presence-bot`) keep their own jobs — those genuinely differ.
+
+**A third rollout gap, same shape as the first two.** Two of the four npm repos (`forgemap`, `envprism`) never got the prerelease-version fix: release-please bumps the version on `main` alone, so a `dev` branch published a version semver ranks below the latest release, and `@dev` resolved to something older than `@latest`. The body carries the corrected logic, so migrating those two is a fix rather than a port — exactly like the three repos on the 189-line queue workflow.
+
+**Two publish bodies are not dogfooded here.** This repo ships no npm package and no provider, so `_publish-npm.yml` and `_publish-goreleaser.yml` have no `self`-stub and will first run in a calling repo. Every other body fails here first; these two do not.
+
+**Action pins have drifted independently of the files.** `actions/checkout` appears as `v7` (21×), a raw SHA (6×), `v6` (2×) and `v3`; `github/codeql-action` in seven different refs. Centralising a body collapses its pins to one by construction.
+
+**Coverage is five implementations across eight repos** — `codecov-action`, `vitest-coverage-report-action` (in two versions), `irongut/CodeCoverageSummary`, `sticky-pull-request-comment`, and the estate's own [`kirchDev/coverage-report`](https://github.com/kirchDev/coverage-report). The last one is stack-agnostic by design (Vitest and Pest reports alike), so standardising on it removes what would otherwise be the hardest stack-specific part of a central `ci.yml`. Do that before attempting `ci.yml`, not after.
+
+## CI is bodies-as-jobs, not one pipeline
+
+`ci.yml`'s 24 variants are **four families and three outliers**: 11 repos running a single gate, 5 Node libraries (`lint typecheck test build`), 2 Laravel packages (271/289 lines, near-identical), 3 Terraform providers (`lint go`), plus `app` (705 lines, tree-hash markers and deploy stages), `gildstone` (`detect-changes` and three `workflow_call` test bodies it already wrote itself) and `infrastructure` (OpenTofu).
+
+**One body with `run-test` / `needs-postgres` / `test-command` switches was considered and rejected.** It works, and it turns every stub into a 15-key config file — the drift back, one level up. It also leaves the three outliers as special cases anyway, and they carry the most logic. So a CI body is a **job** the caller composes into its own pipeline, and inputs say what a body *cannot know* (which PHP versions), never which parts to skip.
+
+`_ci-check.yml` is the first, and it runs the gate as **one job with one step per check**, not one step running them all. Collapsing them into a single `pnpm check` would cost the thing that matters most in a red build: the run overview stops saying which check failed. Each task therefore gets its own `::group::` and its own error line. **A matrix was the other candidate and loses here on arithmetic** — jobs share nothing, so n tasks mean n checkouts and n installs, and starting four runners to parallelise four ten-second tasks makes a one-to-two-minute run slower while burning four runners instead of one. It earns its overhead in `_ci-laravel.yml` and `_ci-go.yml`, where a single task runs for minutes and where `test` should be a required check on its own.
+
+The task list is derived from the repo's own `package.json` rather than passed in: `resolve` splits the gate script on `&&`, keeps each bare `pnpm <task>` call, and expands recursively, since a gate may chain another aggregate (`skills` runs `verify` → `check` → `lint && format`). That is what carries the repo-specific checks — `validate`, `check:policy`, `skills:check` — along without listing them here; a fixed candidate list would have dropped exactly those. A task taking arguments is left unexpanded, because running it standalone would change what it does.
+
+All of it is built: `_verified.yml` / `_record-verified.yml` (the tree-hash markers from `app` — `skip` gates the caller's own jobs, so a repo takes the markers without handing over its pipeline), `_detect-changes.yml` (path filters, passed in because they describe a layout only the repo knows), `_ci-node.yml`, `_ci-laravel.yml`, `_ci-go.yml`, `_ci-tofu.yml` and `_coverage.yml` around `kirchDev/coverage-report`.
+
+**Deliberately NOT bodies, measured rather than assumed:**
+
+- **`render` needs no body at all.** It is `pnpm render` followed by `git diff --exit-code README.md` — a generated file asserting it is current. That is a gate task, so it belongs in the repo's `check` script, where `_ci-check.yml` picks it up as its own step. Same answer as the `.gitignore` drift check.
+- **`quality-report` is superseded rather than centralised.** It posted ONE pull-request comment carrying coverage and the Lighthouse summary together, to avoid a second thread. That coupling is exactly what stopped either half from becoming a body: a repo calling `_coverage.yml` beside it would have got the second thread anyway. **Settled the other way — one thread per reporter.** `_coverage.yml` keeps the `coverage-report` marker its action already writes, `_ci-lighthouse.yml` posts under `lighthouse`, and the two never meet. Two threads is the price; it buys two bodies that neither know nor need each other.
+- **The four deploy jobs.** Repo-owned by design — they touch environments, not code.
+
+**Three bodies are deliberate exceptions to "one instance is not a pattern"**, and the exception is earned by a repo that will need them, not by a hunch:
+
+- `_ci-tofu.yml` — one caller today. `infrastructure` holds the estate's SSOT, and the second Tofu repo should not start by copying 350 lines.
+- `_ci-e2e.yml` and `_ci-lighthouse.yml` — `app` has Lighthouse and no E2E, `gildstone` has E2E (already written as a local `workflow_call` body, so the work exists in the wrong repo) and no Lighthouse. Same gattung, complementary halves. `oggsbreinig` is a third turborepo of that shape **with no `ci.yml` at all yet**, and `saas-template` exists to produce more. That is a named third caller, not a guess. The Lighthouse body carries `app`'s shard-merge step too, so the second caller does not have to rebuild it.
+- `_ci-rust.yml` — `glimpse` is the only Rust repo today, and the body is written anyway because the alternative is worse: the next one would start by copying a three-platform matrix with an apt list in it. Migrating `glimpse` onto it may change its check names, which is acceptable — that happens once, alongside every other repo's migration. Note that `cargo fmt --check` also runs through `glimpse`'s gate script; the duplication is deliberate, since the gate catches it in seconds on one runner and the body catches it on every platform.
+
+The Lighthouse body generalises `app`'s chain at exactly the two points that were repo-local — how the shard list is produced (`targets` or `targets-command`) and how the app is built. What is NOT generalised is the sharding itself: one runner per page, because two Chrome instances on one worker contend for CPU and that contention lands in the numbers being measured. The isolation is the method, so it stays fixed rather than becoming an input.
+
+## Breaking changes a migration carries
+
+Each of these lands once, per repo, at the moment its stub replaces its copy. None is a surprise to be discovered later — they are listed here so a migration PR can carry the fix in the same change.
+
+| Repo | What breaks | What to do in the same PR |
+| :--- | :--- | :--- |
+| every repo | Check names become `<caller-job> / <body-job>` | Update the branch-protection rule; a rule on the old name waits forever |
+| `app` | Its single `quality-report` comment is replaced by two sticky threads — `coverage-report` and `lighthouse` | Drop the combined job; nothing else consumes it |
+| `app` | `_ci-lighthouse.yml` reports one job per shard plus a `summary`, where the copy had `audit-targets` / `audit` / `audit-summary` | Same branch-protection edit as above |
+| `glimpse` | `_ci-rust.yml` renames `deny` and `build`, and runs `fmt`/`clippy`/`test` inside one job per platform | Accepted deliberately — the alternative was never centralising Rust |
+| `coverage-report`, `vite-plugin-iconify-bundle`, `forgemap`, `envprism` | Prerelease versions start deriving from the last release rather than `package.json` | Nothing — two of the four gain a fix, the other two keep their behaviour |
+| `fast-forward-queue.yml` callers | A new `Resolve the integration branch` check appears | Add it to branch protection if the queue checks are required |
+
+**Three repos are a fix rather than a port**, and their migration PR should say so: `coverage-report`, `vite-plugin-iconify-bundle` and `TitusKirch/hike-recap` carry the 189-line queue workflow with no App-token path at all.
+
+## Extending a body that almost fits
+
+A reusable workflow is taken whole: a caller cannot replace one step or insert another. The answer is not switches in the body but a **second surface** — the setup that every Node body opens with also ships as `.github/actions/setup-node-pnpm`, a composite action running inside the caller's own job. A repo needing "the body plus one thing" writes its own job around the action rather than forking.
+
+> [!IMPORTANT]
+> The bodies here do **not** call that action, and that is deliberate. A reusable workflow resolves `./…` against the **caller's** workspace, not its own repository, so a body must name `kirchDev/workflows/…@<ref>` in full — and `uses:` accepts no expression, so the ref would be hard-coded. A caller pinning a body to one SHA would then run an action from a different commit, silently. The four setup lines stay duplicated across the bodies; four lines are cheaper than a pin that lies.
+
+## Open points
+
+Carried over from the build brief; none of these is settled.
+
+- **Does `skipped` satisfy a required check?** The tree-hash marker design leans on it. Verify deliberately before it becomes estate-wide policy.
+- **Concurrency group scope.** `group: fast-forward-queue` is unqualified. It should evaluate in the caller's scope; if it does not, two repos draining at once serialise against each other for nothing. Cheap to verify, expensive to discover.
+- **Job names are the branch-protection interface.** Centralising renames every check to `<caller-job> / <body-job>` exactly once. That migration is coordinated, not discovered.
+- **release-please `node` vs `simple`.** See the release-please bullet above.
+
+## When editing this repo
+
+- Every file referencing `kirchDev/workflows` names this repo. Keep the references consistent so a single `grep -rn "kirchDev/workflows"` catches them all.
+- `forgemap` (sibling repo at `../forgemap`) is the de-facto reference implementation of the meta-layer conventions. When unsure about a config choice, check what forgemap does. For the workflows themselves, the reference is `kirchDev/app`, which runs the three-stage flow and the tree-hash markers in production.
+- `package.json` is `"private": true` and `"name": "workflows"` — nothing is published to npm. release-please still runs `release-type: node`, so it bumps that private version alongside the tag. **The tags are the interface every caller pins**, so a release here is never cosmetic.
+- Changing a body's job **names** changes the check names every caller reports (`<caller-job> / <body-job>`), which is what branch-protection rules match on. Renaming one breaks required checks estate-wide, once, silently. Treat job names as public API.
