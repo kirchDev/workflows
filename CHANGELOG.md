@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.2](https://github.com/kirchDev/workflows/compare/v0.1.1...v0.1.2) (2026-09-01)
+
+
+### Bug Fixes
+
+* **ci:** stop two bodies in one caller from cancelling each other ([64216e0](https://github.com/kirchDev/workflows/commit/64216e005e6d3bcf2844ed051445ae2779e3e02c))
+
 ## [0.1.1](https://github.com/kirchDev/workflows/compare/v0.1.0...v0.1.1) (2026-09-01)
 
 
