@@ -63,6 +63,25 @@ on:
         required: false
         type: number
         default: 20
+      report-path:
+        description: >-
+          Where a shard writes its report. Each shard uploads its own; the
+          summary job below merges them back into one.
+        required: false
+        type: string
+        default: ''
+      merge-command:
+        description: >-
+          Command that turns the downloaded shard reports into one summary. It
+          receives the directory as $REPORTS. Empty skips the merge entirely —
+          a repo auditing a single page has nothing to merge.
+        required: false
+        type: string
+        default: ''
+    outputs:
+      report-artifact:
+        description: Name of the merged report artifact, if one was produced.
+        value: ${{ jobs.summary.outputs.artifact }}
 
 jobs:
   targets:
@@ -162,3 +181,56 @@ jobs:
         env:
           TARGET: ${{ matrix.target }}
         run: ${{ inputs.audit-command }}
+
+      # One artifact per shard, named after the target, so the summary job can
+      # collect them with a pattern. Uploaded even on failure: a red audit is
+      # exactly when its numbers are worth reading.
+      - name: Upload the shard report
+        if: always() && inputs.report-path != ''
+        uses: actions/upload-artifact@v7
+        with:
+          name: lighthouse-report-${{ strategy.job-index }}
+          path: ${{ inputs.report-path }}
+          retention-days: 1
+          if-no-files-found: ignore
+
+  # Each shard gates on its own pages — violations are decided per measurement,
+  # with no cross-page context — so nothing waits for the others to fail
+  # correctly. Only the REPORT is reassembled, which is what this job is for.
+  summary:
+    name: Merge the Audit Reports
+    needs: audit
+    if: always() && inputs.merge-command != '' && inputs.report-path != ''
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      artifact: lighthouse-report
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ inputs.node-version }}
+
+      - name: Download the shard reports
+        uses: actions/download-artifact@v7
+        with:
+          pattern: lighthouse-report-*
+          merge-multiple: true
+          path: tmp/lighthouse
+
+      - name: Merge the shard reports
+        env:
+          REPORTS: tmp/lighthouse
+        run: ${{ inputs.merge-command }}
+
+      - name: Upload the merged report
+        uses: actions/upload-artifact@v7
+        with:
+          name: lighthouse-report
+          path: tmp/lighthouse
+          retention-days: 7
+          if-no-files-found: ignore

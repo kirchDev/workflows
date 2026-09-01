@@ -205,14 +205,15 @@ All of it is built: `_verified.yml` / `_record-verified.yml` (the tree-hash mark
 
 **Deliberately NOT bodies, measured rather than assumed:**
 
-- **`quality-report` and `render`.** One repo each, no second caller in sight.
-- **Rust.** `glimpse` is the only repo with `cargofmt`, `deny` and a Cargo build. One instance is not a pattern; a body would be a guess about a second repo that does not exist.
+- **`render` needs no body at all.** It is `pnpm render` followed by `git diff --exit-code README.md` — a generated file asserting it is current. That is a gate task, so it belongs in the repo's `check` script, where `_ci-check.yml` picks it up as its own step. Same answer as the `.gitignore` drift check.
+- **`quality-report` is blocked on a conflict, not on a second caller.** It posts ONE pull-request comment carrying coverage and the Lighthouse summary together, and its own comment explains why: a second reporting job beside it would start a second thread. But `_coverage.yml` posts a sticky comment of its own — so a repo using both gets exactly the two threads `app` avoided. Before this becomes a body, that has to be settled: either `_coverage.yml` writes into a shared marker, or a repo picks one reporter and not the other.
 - **The four deploy jobs.** Repo-owned by design — they touch environments, not code.
 
 **Three bodies are deliberate exceptions to "one instance is not a pattern"**, and the exception is earned by a repo that will need them, not by a hunch:
 
 - `_ci-tofu.yml` — one caller today. `infrastructure` holds the estate's SSOT, and the second Tofu repo should not start by copying 350 lines.
-- `_ci-e2e.yml` and `_ci-lighthouse.yml` — `app` has Lighthouse and no E2E, `gildstone` has E2E (already written as a local `workflow_call` body, so the work exists in the wrong repo) and no Lighthouse. Same gattung, complementary halves. `oggsbreinig` is a third turborepo of that shape **with no `ci.yml` at all yet**, and `saas-template` exists to produce more. That is a named third caller, not a guess.
+- `_ci-e2e.yml` and `_ci-lighthouse.yml` — `app` has Lighthouse and no E2E, `gildstone` has E2E (already written as a local `workflow_call` body, so the work exists in the wrong repo) and no Lighthouse. Same gattung, complementary halves. `oggsbreinig` is a third turborepo of that shape **with no `ci.yml` at all yet**, and `saas-template` exists to produce more. That is a named third caller, not a guess. The Lighthouse body carries `app`'s shard-merge step too, so the second caller does not have to rebuild it.
+- `_ci-rust.yml` — `glimpse` is the only Rust repo today, and the body is written anyway because the alternative is worse: the next one would start by copying a three-platform matrix with an apt list in it. Migrating `glimpse` onto it may change its check names, which is acceptable — that happens once, alongside every other repo's migration. Note that `cargo fmt --check` also runs through `glimpse`'s gate script; the duplication is deliberate, since the gate catches it in seconds on one runner and the body catches it on every platform.
 
 The Lighthouse body generalises `app`'s chain at exactly the two points that were repo-local — how the shard list is produced (`targets` or `targets-command`) and how the app is built. What is NOT generalised is the sharding itself: one runner per page, because two Chrome instances on one worker contend for CPU and that contention lands in the numbers being measured. The isolation is the method, so it stays fixed rather than becoming an input.
 

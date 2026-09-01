@@ -56,6 +56,7 @@ A **body** is prefixed with `_` and runs only via `workflow_call`. Anything with
 | `_ci-tofu.yml`            | fmt, validate for OpenTofu                               | ✅ reusable |
 | `_ci-e2e.yml`             | Playwright against a real backend, with browser cache    | ✅ reusable |
 | `_ci-lighthouse.yml`      | Sharded Lighthouse audit, one runner per page            | ✅ reusable |
+| `_ci-rust.yml`            | Toolchain, cached build, fmt, clippy, tests, cargo-deny  | ✅ reusable |
 | `_coverage.yml`           | One sticky comment via `kirchDev/coverage-report`        | ✅ reusable |
 
 `ci.yml` is the one workflow that does not become a single body. Its 24 variants are four families — 11 repos running one gate, 5 Node libraries, 2 Laravel packages, 3 Terraform providers — plus three repos with pipelines of their own. Every family now has its body, and the three outliers compose from the pieces rather than hand over their pipeline.
