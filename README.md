@@ -253,6 +253,20 @@ A repo whose gate lives under another name passes it:
       gate-script: verify
 ```
 
+### Adding a check needs no workflow change
+
+Because the job list comes from the gate script, a repo adds a check by editing `package.json` alone. The `.gitignore` drift check is the worked example:
+
+```jsonc
+"gitignore:check": "gitignore-sync check",
+"check": "pnpm lint && pnpm format && pnpm typecheck && pnpm gitignore:check"
+```
+
+`_ci-check.yml` resolves the gate, finds `gitignore:check` and runs it with its own log group and its own error line — the same mechanism that carries `validate`, `check:policy` and `skills:check`. Nothing here is listed anywhere in this repo.
+
+> [!NOTE]
+> That check deliberately gets **no body of its own**. A body earns its place by encapsulating a job *environment* — permissions that are easy to get wrong, artifacts moving between jobs, or several implementations converging into one, which is what `_coverage.yml` does. [`kirchDev/gitignore-sync`](https://github.com/kirchDev/gitignore-sync) needs `contents: read` and returns an exit code, and it already ships its own composite action for the two repos with no gate script. A body would be a file calling an action calling a CLI.
+
 **One job, one step per check — not a matrix.** Jobs share nothing: separate runner, separate filesystem, separate `node_modules`. Fanning four ten-second tasks over four jobs means four checkouts and four installs, which for a one-to-two-minute run makes it slower and burns four runners instead of one. Each task gets its own log group and its own error line instead, so a red build still names the check that failed. The matrix earns its overhead in the Laravel and Go bodies, where a single job runs for minutes and where `test` should be a required check on its own.
 
 ### Skipping work that cannot fail
