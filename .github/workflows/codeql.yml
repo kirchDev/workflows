@@ -1,12 +1,16 @@
 # yaml-language-server: $schema=https://json.schemastore.org/github-workflow.json
 
-# Caller stub. The triggers live here because the branch filter is this repo's
-# own — a Go repo additionally names "go" in `languages`.
+# A repo that adds a compiled language names it in `languages` — the body sets
+# the build mode per language, so Go needs no second workflow.
 name: CodeQL
 
 on:
+  # PUSH ON THE RELEASE BRANCH ONLY. A push to an integration branch always has
+  # a pull request open on it, and that PR run scans the same tree — listing
+  # `dev` here as well ran CodeQL twice for one result, about a minute of runner
+  # time per change with nothing to show for the second.
   push:
-    branches: [main, dev]
+    branches: [main]
   pull_request:
     branches: [main, dev]
   schedule:
