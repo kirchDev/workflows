@@ -1,0 +1,67 @@
+# yaml-language-server: $schema=https://json.schemastore.org/github-workflow.json
+
+name: Verified Tree (reusable)
+
+# Asks whether these exact bytes already passed CI, and hands the caller a
+# `skip` output to gate its own jobs on. Taken from kirchDev/app, where it runs
+# in production. See README → CI for how a pipeline composes it.
+#
+# KEYED ON THE TREE HASH, NOT THE COMMIT: the tree names the CONTENT, so the
+# marker is blind to how a commit got here — two commits share one only when
+# every byte of the working tree matches.
+#
+# A REF, NOT `actions/cache`. The cache is branch-scoped: a run reads only its
+# own branch, its base and the default branch, so a marker written on `dev`
+# would be invisible on `stage` — which is the entire case this exists for.
+# Refs under their own namespace are repo-global, and invisible to `git fetch`,
+# which takes only heads and tags.
+on:
+  workflow_call:
+    outputs:
+      skip:
+        description: '"true" when this tree already passed — gate your jobs on it.'
+        value: ${{ jobs.verified.outputs.skip }}
+      tree:
+        description: The tree hash, to hand to _record-verified.yml afterwards.
+        value: ${{ jobs.verified.outputs.tree }}
+
+jobs:
+  verified:
+    name: Look for a Verified Tree
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      tree: ${{ steps.check.outputs.tree }}
+      skip: ${{ steps.check.outputs.skip }}
+    steps:
+      # Through the API rather than a checkout: the tree hash is one field of the
+      # commit, and cloning the repository to read it would cost more than the
+      # lookup does.
+      #
+      # On a pull request GITHUB_SHA is the MERGE commit, so this is the tree
+      # that will land on the target branch — which is in turn why the push run
+      # after the merge finds this marker and stops.
+      - name: Look for a marker matching this tree
+        id: check
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TREE=$(gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA" --jq '.commit.tree.sha' 2> /dev/null || true)
+
+          # Fail open. An unreachable API, a changed payload or an empty answer
+          # must cost a redundant run, never a skipped one.
+          if [ -z "$TREE" ]; then
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::Could not resolve the tree hash — running the full suite."
+            exit 0
+          fi
+
+          echo "tree=$TREE" >> "$GITHUB_OUTPUT"
+
+          if gh api "repos/$GITHUB_REPOSITORY/git/ref/ci-verified/$TREE" > /dev/null 2>&1; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::Tree $TREE already passed CI — skipping the suite."
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi

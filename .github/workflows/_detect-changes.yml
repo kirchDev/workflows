@@ -1,0 +1,68 @@
+# yaml-language-server: $schema=https://json.schemastore.org/github-workflow.json
+
+name: Detect Changes (reusable)
+
+# Answers which parts of a repo a pull request touched, so a docs-only change
+# does not start a PHP matrix. The caller passes its own path filters — those
+# are the one thing this cannot derive, since they describe a layout only the
+# repo knows — and gates its jobs on the `changes` output.
+#
+# Pairs with _verified.yml rather than competing with it: the marker skips a run
+# whose bytes already passed, this one skips jobs the change cannot affect.
+on:
+  workflow_call:
+    inputs:
+      filters:
+        description: >-
+          dorny/paths-filter YAML. Each key becomes a name that may appear in
+          the `changes` output.
+        required: true
+        type: string
+      force:
+        description: Treat everything as changed — for a `workflow_dispatch` that wants the full suite.
+        required: false
+        type: boolean
+        default: false
+    outputs:
+      changes:
+        description: JSON array of the filter names that matched. Gate with `contains(fromJSON(...), 'php')`.
+        value: ${{ jobs.detect.outputs.changes }}
+
+jobs:
+  detect:
+    name: Detect Changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      # dorny/paths-filter resolves a pull request's changed files through the
+      # API (listFiles), which needs this. A `permissions:` block replaces the
+      # defaults rather than adding to them, so without it every pull_request run
+      # dies at this step with "Resource not accessible by integration".
+      pull-requests: read
+    outputs:
+      changes: ${{ inputs.force && steps.all.outputs.names || steps.filter.outputs.changes }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+
+      # A forced run must report every filter as changed, not an empty list —
+      # an empty list reads as "nothing to do" and would skip the whole suite,
+      # the exact opposite of what forcing asks for.
+      - name: Treat every filter as changed
+        id: all
+        if: inputs.force
+        env:
+          FILTERS: ${{ inputs.filters }}
+        run: |
+          set -euo pipefail
+          names=$(printf '%s' "$FILTERS" | grep -oE '^[a-zA-Z0-9_-]+:' | tr -d ':' | jq -R . | jq -sc .)
+          echo "names=$names" >> "$GITHUB_OUTPUT"
+          echo "Forced: $names"
+
+      - uses: dorny/paths-filter@v4
+        if: ${{ !inputs.force }}
+        id: filter
+        with:
+          filters: ${{ inputs.filters }}

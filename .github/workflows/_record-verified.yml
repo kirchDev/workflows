@@ -1,0 +1,57 @@
+# yaml-language-server: $schema=https://json.schemastore.org/github-workflow.json
+
+name: Record Verified Tree (reusable)
+
+# The other half of _verified.yml. The caller runs it last, with `needs` on
+# every job whose verdict the marker is meant to stand for — and passes the
+# tree hash that _verified.yml resolved.
+#
+# THE MARKER IS A CLAIM ABOUT WHAT PASSED, so the caller decides what it covers.
+# Gating this job on lint alone would record a tree as verified that was never
+# tested. `if: needs.*.result == 'success'` belongs in the caller for that
+# reason — the body cannot know which jobs a repo considers sufficient.
+on:
+  workflow_call:
+    inputs:
+      tree:
+        description: Tree hash from _verified.yml's `tree` output.
+        required: true
+        type: string
+
+jobs:
+  record:
+    name: Record the Verified Tree
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      # Created through the API, not `git push`, and so without a checkout at
+      # all. A push would have to come out of the shallow clone the runner makes,
+      # which git refuses often enough to matter — and the failure would be
+      # invisible, leaving a green job that silently never records anything.
+      #
+      # Racing runs can reach the same tree at once — a merge pull request and
+      # the push that follows it, most obviously. The loser would collide with a
+      # ref that already says what it was about to say, so losing counts as
+      # success; anything else is a real error and fails the job.
+      - name: Mark this tree as verified
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TREE: ${{ inputs.tree }}
+        run: |
+          if [ -z "$TREE" ]; then
+            echo "::warning::No tree hash — _verified.yml failed open, so there is nothing to record."
+            exit 0
+          fi
+
+          if gh api "repos/$GITHUB_REPOSITORY/git/refs" \
+            -f "ref=refs/ci-verified/$TREE" \
+            -f "sha=$GITHUB_SHA" > /dev/null 2>&1
+          then
+            echo "::notice::Recorded tree $TREE as verified."
+          elif gh api "repos/$GITHUB_REPOSITORY/git/ref/ci-verified/$TREE" > /dev/null 2>&1; then
+            echo "::notice::Tree $TREE was already marked by a concurrent run."
+          else
+            echo "::error::Could not record tree $TREE as verified."
+            exit 1
+          fi
