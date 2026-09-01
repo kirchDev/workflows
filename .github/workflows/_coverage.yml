@@ -1,0 +1,58 @@
+# yaml-language-server: $schema=https://json.schemastore.org/github-workflow.json
+
+name: Coverage Report (reusable)
+
+# One sticky comment and one check run, built from reports a previous job
+# uploaded — via the estate's own `kirchDev/coverage-report`, which reads Vitest
+# and Pest output alike and sends no coverage data anywhere.
+#
+# THIS REPLACES FIVE IMPLEMENTATIONS across eight repos: codecov-action,
+# vitest-coverage-report-action (in two versions), irongut/CodeCoverageSummary
+# and a hand-built sticky-pull-request-comment. Being stack-agnostic is what
+# makes it possible — it is also what removes the hardest stack-specific piece
+# from a shared `ci.yml`.
+on:
+  workflow_call:
+    inputs:
+      artifact:
+        description: Name of the artifact holding the coverage report(s).
+        required: false
+        type: string
+        default: coverage
+      reports:
+        description: >-
+          Newline-separated report paths, e.g. "coverage/lcov.info" for Vitest
+          or "coverage.xml" for Pest. Both may be listed.
+        required: true
+        type: string
+      min-patch:
+        description: Minimum patch coverage in percent; empty disables the check.
+        required: false
+        type: string
+        default: ''
+
+jobs:
+  report:
+    name: Coverage
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # The sticky comment and the check run.
+      pull-requests: write
+      checks: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+
+      # The reports come from whichever job produced them — this body never
+      # runs a test suite itself, so it stays free of every stack it serves.
+      - name: Download the coverage reports
+        uses: actions/download-artifact@v7
+        with:
+          name: ${{ inputs.artifact }}
+
+      - uses: kirchDev/coverage-report@v0.1.0
+        with:
+          reports: ${{ inputs.reports }}
+          min-patch: ${{ inputs.min-patch }}
