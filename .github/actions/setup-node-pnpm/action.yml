@@ -1,0 +1,60 @@
+# yaml-language-server: $schema=https://json.schemastore.org/github-action.json
+
+name: Setup Node and pnpm
+description: >-
+  Checkout, pnpm, Node with the pnpm store cached, and a frozen install — the
+  four steps every Node body opened with, wordlessly duplicated in each.
+
+# A COMPOSITE ACTION, NOT A REUSABLE WORKFLOW, and the difference is the point:
+# this runs inside the caller's job and adds no runner. A workflow would start a
+# second job, which is exactly the overhead these steps are not worth.
+#
+# THIS IS THE EXTENSION POINT — the answer to "what if a body almost fits". A
+# repo that needs the setup plus something of its own writes its own job and
+# puts this first, instead of forking a body it could otherwise only take whole:
+#
+#   jobs:
+#     custom:
+#       runs-on: ubuntu-latest
+#       steps:
+#         - uses: kirchDev/workflows/.github/actions/setup-node-pnpm@9f3c1a2
+#         - run: pnpm something-only-this-repo-does
+#
+# THE BODIES IN THIS REPO DELIBERATELY DO NOT USE IT. A reusable workflow
+# resolves `./…` against the CALLER's workspace, not its own repository, so a
+# body would have to name `kirchDev/workflows/…@<ref>` in full — and `uses:`
+# takes no expression, so that ref would be hard-coded. A caller pinning the
+# body to one SHA would then silently run an action from another. The four
+# setup steps stay duplicated in the bodies for that reason; four lines are
+# cheaper than a pin that lies.
+inputs:
+  node-version:
+    description: Node version to install.
+    required: false
+    default: '24'
+  install:
+    description: Dependency install command.
+    required: false
+    default: pnpm install --frozen-lockfile
+  fetch-depth:
+    description: Checkout depth.
+    required: false
+    default: '1'
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/checkout@v7
+      with:
+        fetch-depth: ${{ inputs.fetch-depth }}
+
+    - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
+
+    - uses: actions/setup-node@v7
+      with:
+        node-version: ${{ inputs.node-version }}
+        cache: pnpm
+
+    - name: Install dependencies
+      shell: bash
+      run: ${{ inputs.install }}
