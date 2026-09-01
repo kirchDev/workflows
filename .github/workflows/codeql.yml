@@ -13,6 +13,11 @@ on:
     branches: [main]
   pull_request:
     branches: [main, dev]
+    # `ready_for_review` matters because the push trigger no longer covers `dev`:
+    # a pull request opened as a draft runs the analysis once, and without this
+    # type undrafting produces no second run — leaving a required code-scanning
+    # result that never arrives.
+    types: [opened, synchronize, reopened, ready_for_review]
   schedule:
     - cron: '34 23 * * 0'
   workflow_dispatch:
