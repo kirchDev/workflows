@@ -78,6 +78,13 @@ on:
         required: false
         type: string
         default: ''
+      summary-file:
+        description: >-
+          Markdown file the merge writes, relative to the report directory. When
+          set, it is posted to the pull request as a sticky comment of its own.
+        required: false
+        type: string
+        default: ''
     outputs:
       report-artifact:
         description: Name of the merged report artifact, if one was produced.
@@ -197,6 +204,13 @@ jobs:
   # Each shard gates on its own pages — violations are decided per measurement,
   # with no cross-page context — so nothing waits for the others to fail
   # correctly. Only the REPORT is reassembled, which is what this job is for.
+  # ONE THREAD PER REPORTER, not one thread for everything. `app` collected
+  # coverage and the audit into a single comment to avoid a second thread, and
+  # that coupling is what stopped either half from becoming a body — a repo
+  # calling `_coverage.yml` alongside it would have got the second thread
+  # anyway. Each reporter now owns its own sticky marker instead: `coverage`
+  # there, `lighthouse` here. Two threads is the price, and it buys two bodies
+  # that neither know nor need each other.
   summary:
     name: Merge the Audit Reports
     needs: audit
@@ -204,6 +218,8 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      # The sticky comment. Only requested when there is one to post.
+      pull-requests: write
     outputs:
       artifact: lighthouse-report
     steps:
@@ -234,3 +250,17 @@ jobs:
           path: tmp/lighthouse
           retention-days: 7
           if-no-files-found: ignore
+
+      # `header` is what makes it sticky: the action edits the comment carrying
+      # that marker instead of adding one, so a re-run updates the numbers
+      # rather than stacking them. `coverage` is the marker `_coverage.yml`
+      # uses; this one must never collide with it.
+      - name: Post the audit summary to the pull request
+        if: >-
+          inputs.summary-file != ''
+          && github.event_name == 'pull_request'
+          && github.actor != 'dependabot[bot]'
+        uses: marocchino/sticky-pull-request-comment@5770ad5eb8f42dd2c4f34da00c94c5381e49af88 # v3.0.5
+        with:
+          header: lighthouse
+          path: tmp/lighthouse/${{ inputs.summary-file }}
