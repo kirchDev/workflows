@@ -1,0 +1,164 @@
+# yaml-language-server: $schema=https://json.schemastore.org/github-workflow.json
+
+name: CI Lighthouse (reusable)
+
+# Reusable body for a sharded Lighthouse audit. Taken from kirchDev/app, where
+# it runs in production, and generalised at the two points that were repo-local:
+# how the shard list is produced, and how the app is built.
+#
+# ABSTRACTED AHEAD OF THE SECOND CALLER, like `_ci-e2e.yml` and for the same
+# reason: `app` has Lighthouse and no E2E, `gildstone` has E2E and no
+# Lighthouse, and they are the same gattung. `oggsbreinig` is a third repo of
+# that shape still waiting for its `ci.yml`. The two bodies are the halves each
+# repo is missing from the other.
+#
+# ONE RUNNER PER PAGE, not one runner measuring several pages at once. Two
+# Chrome instances on the same worker contend for CPU, and that contention lands
+# in the very numbers being measured — total blocking time, largest contentful
+# paint. In-process parallelism would buy wall-clock by corrupting the result.
+on:
+  workflow_call:
+    inputs:
+      targets:
+        description: >-
+          JSON array of pages to audit, one shard each. Mutually exclusive with
+          `targets-command`.
+        required: false
+        type: string
+        default: ''
+      targets-command:
+        description: >-
+          Command printing that JSON array instead — for a repo whose page list
+          is derived from its own routes rather than written out.
+        required: false
+        type: string
+        default: ''
+      build-command:
+        description: Command that builds the app before measuring it.
+        required: true
+        type: string
+      audit-command:
+        description: >-
+          Command auditing one target. The target is available as $TARGET.
+        required: false
+        type: string
+        default: pnpm audit:lighthouse
+      setup-php:
+        description: Install PHP and Composer first — for a Laravel-backed app.
+        required: false
+        type: boolean
+        default: false
+      php-version:
+        description: PHP version when `setup-php` is set.
+        required: false
+        type: string
+        default: '8.4'
+      node-version:
+        description: Node version.
+        required: false
+        type: string
+        default: '24'
+      timeout-minutes:
+        description: Per-shard timeout.
+        required: false
+        type: number
+        default: 20
+
+jobs:
+  targets:
+    name: Plan the Audit
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      targets: ${{ steps.plan.outputs.targets }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ inputs.node-version }}
+
+      - name: Read the audit targets
+        id: plan
+        env:
+          TARGETS: ${{ inputs.targets }}
+          TARGETS_COMMAND: ${{ inputs.targets-command }}
+        run: |
+          set -euo pipefail
+
+          if [ -n "$TARGETS" ] && [ -n "$TARGETS_COMMAND" ]; then
+            echo "::error::Pass either targets or targets-command, not both."
+            exit 1
+          fi
+
+          if [ -n "$TARGETS" ]; then
+            targets=$TARGETS
+          elif [ -n "$TARGETS_COMMAND" ]; then
+            targets=$(eval "$TARGETS_COMMAND")
+          else
+            echo "::error::Neither targets nor targets-command was given."
+            exit 1
+          fi
+
+          if ! printf '%s' "$targets" | jq -e 'type == "array" and length > 0' > /dev/null 2>&1; then
+            echo "::error::Targets must be a non-empty JSON array, got: $targets"
+            exit 1
+          fi
+
+          echo "targets=$targets" >> "$GITHUB_OUTPUT"
+          echo "Auditing: $targets"
+
+  audit:
+    name: Lighthouse Audit (${{ matrix.target }})
+    needs: targets
+    runs-on: ubuntu-latest
+    timeout-minutes: ${{ inputs.timeout-minutes }}
+    permissions:
+      contents: read
+    strategy:
+      # One failing page must not cancel the runners measuring the others: the
+      # first red shard would otherwise hide every other regression until it is
+      # fixed, turning one bad run into several.
+      fail-fast: false
+      matrix:
+        target: ${{ fromJSON(needs.targets.outputs.targets) }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+
+      - name: Setup PHP
+        if: inputs.setup-php
+        uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # 2.37.2
+        with:
+          php-version: ${{ inputs.php-version }}
+          coverage: none
+
+      - name: Install Composer dependencies
+        if: inputs.setup-php
+        run: composer install --no-interaction --prefer-dist --optimize-autoloader
+
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ inputs.node-version }}
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # Every shard builds the app itself. Sharing one build through an artifact
+      # would be cheaper in CPU and wrong in kind: the measurement is of a real
+      # load on a runner that has done nothing else, and reusing a build means
+      # reusing whatever state producing it left behind.
+      - name: Build
+        run: ${{ inputs.build-command }}
+
+      - name: Audit
+        env:
+          TARGET: ${{ matrix.target }}
+        run: ${{ inputs.audit-command }}

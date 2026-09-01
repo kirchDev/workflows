@@ -1,0 +1,137 @@
+# yaml-language-server: $schema=https://json.schemastore.org/github-workflow.json
+
+name: CI Node (reusable)
+
+# Reusable body for the Node libraries: typecheck, test and build as separate
+# jobs. Sits alongside `_ci-check.yml` rather than replacing it — that one runs
+# the lint/format gate, this one the work that takes minutes.
+#
+# SEPARATE JOBS HERE, unlike in `_ci-check.yml`, because these are the tasks
+# worth paying a runner for: a test suite and a build run long enough that
+# parallelism wins over the duplicated install, and `test` deserves to be a
+# required check on its own.
+#
+# Each job is skipped when the repo has no such script — derived from
+# package.json, not switched by an input.
+on:
+  workflow_call:
+    inputs:
+      node-versions:
+        description: JSON array of Node versions to test across.
+        required: false
+        type: string
+        default: '["24"]'
+      coverage-artifact:
+        description: >-
+          Artifact name for the coverage report `test` produces, for
+          `_coverage.yml` to pick up. Empty uploads nothing.
+        required: false
+        type: string
+        default: coverage
+      coverage-path:
+        description: Path the test run writes its coverage report to.
+        required: false
+        type: string
+        default: coverage/
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  resolve:
+    name: Resolve the jobs
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    outputs:
+      typecheck: ${{ steps.has.outputs.typecheck }}
+      test: ${{ steps.has.outputs.test }}
+      build: ${{ steps.has.outputs.build }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+
+      - name: Which scripts does this repo have?
+        id: has
+        run: |
+          set -euo pipefail
+          for task in typecheck test build; do
+            if node -e "process.exit(('$task' in (JSON.parse(require('fs').readFileSync('package.json','utf8')).scripts ?? {})) ? 0 : 1)"; then
+              echo "$task=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "$task=false" >> "$GITHUB_OUTPUT"
+            fi
+          done
+
+  typecheck:
+    name: Typecheck (Node ${{ matrix.node }})
+    needs: resolve
+    if: needs.resolve.outputs.typecheck == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ${{ fromJSON(inputs.node-versions) }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ matrix.node }}
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+
+  test:
+    name: Test (Node ${{ matrix.node }})
+    needs: resolve
+    if: needs.resolve.outputs.test == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ${{ fromJSON(inputs.node-versions) }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ matrix.node }}
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm test
+
+      # Only the first matrix entry uploads: the report is the same work done on
+      # several runtimes, and a second upload under the same name would collide.
+      - name: Upload the coverage report
+        if: inputs.coverage-artifact != '' && matrix.node == fromJSON(inputs.node-versions)[0]
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ inputs.coverage-artifact }}
+          path: ${{ inputs.coverage-path }}
+          retention-days: 1
+          if-no-files-found: ignore
+
+  build:
+    name: Build
+    needs: resolve
+    if: needs.resolve.outputs.build == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ fromJSON(inputs.node-versions)[0] }}
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
