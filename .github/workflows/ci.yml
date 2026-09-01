@@ -1,7 +1,7 @@
 # yaml-language-server: $schema=https://json.schemastore.org/github-workflow.json
 
-# Caller stub. The gate itself is `package.json`'s `check` script — this file
-# only says when to run it.
+# The checks come from this repo's own `check` script in package.json — adding
+# one there is enough, no workflow change needed.
 name: CI
 
 on:
@@ -10,6 +10,13 @@ on:
       - main
       - dev
     types: [opened, synchronize, reopened, ready_for_review]
+    # A change that touches only prose cannot break a lint, a typecheck or the
+    # policy parity script. Workflows are NOT excluded: they are this repo's
+    # product, and `pnpm lint:actions` is part of the gate.
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - LICENSE
 
 permissions:
   contents: read
@@ -17,6 +24,4 @@ permissions:
 jobs:
   check:
     name: CI
-    permissions:
-      contents: read
     uses: ./.github/workflows/_ci-check.yml
