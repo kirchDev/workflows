@@ -1,36 +1,6 @@
 # region gitignore-sync
-# stacks: core, git, node, vscode, intellij, macos, windows, linux
+# stacks: vscode, intellij, macos, windows, linux
 # ─────────────────────────────────────────
-
-# region core@v1
-.DS_Store
-.claude/settings.local.json
-# endregion
-
-# region git@v1
-*.orig
-*.rej
-*.BACKUP.*
-*.BASE.*
-*.LOCAL.*
-*.REMOTE.*
-*_BACKUP_*.txt
-*_BASE_*.txt
-*_LOCAL_*.txt
-*_REMOTE_*.txt
-# endregion
-
-# region node@v1
-node_modules
-dist
-coverage
-/logs
-*.log
-*.tsbuildinfo
-.eslintcache
-.npm
-*.tgz
-# endregion
 
 # region vscode@v1
 .vscode/*
@@ -87,3 +57,7 @@ $RECYCLE.BIN/
 # endregion
 
 # endregion
+
+# Rescued from the generated block that was cut: these exist in the
+# working tree and no managed block covers them.
+node_modules
