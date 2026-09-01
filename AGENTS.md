@@ -197,7 +197,7 @@ A body has no trigger of its own, so this repo needs a stub like anybody else. I
 
 **One body with `run-test` / `needs-postgres` / `test-command` switches was considered and rejected.** It works, and it turns every stub into a 15-key config file — the drift back, one level up. It also leaves the three outliers as special cases anyway, and they carry the most logic. So a CI body is a **job** the caller composes into its own pipeline, and inputs say what a body *cannot know* (which PHP versions), never which parts to skip.
 
-`_ci-check.yml` is the first, and it fans the gate out over a matrix — **one job per check**, not one job running them all. Collapsing them would cost three things that matter: the run overview stops saying which check failed, `lint` and `test` stop running in parallel, and a single aspect can no longer be a required check on its own.
+`_ci-check.yml` is the first, and it runs the gate as **one job with one step per check**, not one step running them all. Collapsing them into a single `pnpm check` would cost the thing that matters most in a red build: the run overview stops saying which check failed. Each task therefore gets its own `::group::` and its own error line. **A matrix was the other candidate and loses here on arithmetic** — jobs share nothing, so n tasks mean n checkouts and n installs, and starting four runners to parallelise four ten-second tasks makes a one-to-two-minute run slower while burning four runners instead of one. It earns its overhead in `_ci-laravel.yml` and `_ci-go.yml`, where a single task runs for minutes and where `test` should be a required check on its own.
 
 The task list is derived from the repo's own `package.json` rather than passed in: `resolve` splits the gate script on `&&`, keeps each bare `pnpm <task>` call, and expands recursively, since a gate may chain another aggregate (`skills` runs `verify` → `check` → `lint && format`). That is what carries the repo-specific checks — `validate`, `check:policy`, `skills:check` — along without listing them here; a fixed candidate list would have dropped exactly those. A task taking arguments is left unexpanded, because running it standalone would change what it does.
 
@@ -243,7 +243,6 @@ A reusable workflow is taken whole: a caller cannot replace one step or insert a
 
 Carried over from the build brief; none of these is settled.
 
-- **`actionlint` is not wired up.** CodeQL analyses application code this repo does not have; `actionlint` checks workflows, which are the product. It runs clean today (`docker run --rm -v "$PWD":/repo -w /repo rhysd/actionlint`), so adding it to `pnpm check` and CI costs nothing but the decision.
 - **Does `skipped` satisfy a required check?** The tree-hash marker design leans on it. Verify deliberately before it becomes estate-wide policy.
 - **Concurrency group scope.** `group: fast-forward-queue` is unqualified. It should evaluate in the caller's scope; if it does not, two repos draining at once serialise against each other for nothing. Cheap to verify, expensive to discover.
 - **Job names are the branch-protection interface.** Centralising renames every check to `<caller-job> / <body-job>` exactly once. That migration is coordinated, not discovered.

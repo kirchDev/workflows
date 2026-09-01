@@ -29,13 +29,37 @@ The canonical workflows used to live in [`scaffold`](https://github.com/TitusKir
 | `dev-pr.yml`             |    20 |        2 | 38        |
 | `codeql.yml`             |    18 |       15 | 47 – 68   |
 
-`dev-pr.yml` is the outlier that proves the point: two variants differing only in the runner label, 760 lines doing one thing. Everything else has already fragmented — `ci.yml` is effectively unique per repo, and `fast-forward-queue.yml` splits into a 10-repo group, a 6-repo group, and six smaller ones carrying a fix the others never got. A fix meant 20 commits, and nothing told you which repos you had missed.
+`dev-pr.yml` is the outlier that proves the point: two variants differing only in the runner label, 760 lines doing one thing. Everything else has already fragmented — `ci.yml` is effectively unique per repo, and `fast-forward-queue.yml` splits into a 10-repo group, a 6-repo group, and six smaller ones carrying a fix the others never got. A fix meant 20 commits, and nothing told you which repos you had missed. A call has none of that. The body is fixed in one place, and every repo picks the fix up on its next bump.
 
-A call has none of that. The body is fixed in one place, and every repo picks the fix up on its next bump.
+## 🚀 Setup
+
+Add the stub to the calling repo. It carries the trigger and nothing else:
+
+```yaml
+# .github/workflows/promotion-pr.yml
+name: Promotion PR
+on:
+  push:
+    branches: [dev, stage]
+jobs:
+  promotion-pr:
+    name: Promotion PR
+    uses: kirchDev/workflows/.github/workflows/_promotion-pr.yml@9f3c1a2 # v0.1.0
+```
+
+Then delete the body that used to live in that file. Nothing else moves. List `stage` in the trigger even on a repo that has no `stage` branch — a filter naming a branch that doesn't exist is a no-op, and it keeps the stub identical everywhere.
+
+> [!IMPORTANT]
+> A called workflow's jobs report as `<caller-job> / <body-job>`, so the check that was `Open or update dev → main PR` becomes `Promotion PR / Open or update the draft PR`. Any **branch-protection rule requiring the old name keeps waiting for a check that will never arrive.** Update the rule in the same change, once per repo.
 
 ## 📦 Available workflows
 
 A **body** is prefixed with `_` and runs only via `workflow_call`. Anything without the prefix is an ordinary workflow — including this repo's own stubs.
+
+Nineteen bodies in four groups: **branch flow** (`_promotion-pr.yml`, `_queue-branch.yml`, `_fast-forward-queue.yml`), **releasing** (`_release-please.yml`, `_publish-npm.yml`, `_publish-goreleaser.yml`), **CI** (`_ci-check.yml`, plus one body per stack — Node, Laravel, Go, OpenTofu, Rust, E2E, Lighthouse), and **reporting and short-circuits** (`_codeql.yml`, `_coverage.yml`, `_verified.yml`, `_record-verified.yml`, `_detect-changes.yml`).
+
+<details>
+<summary>All 19 bodies, and why <code>ci.yml</code> is not one of them</summary>
 
 | Body                      | What it does                                            | Status      |
 | :------------------------ | :------------------------------------------------------ | :---------- |
@@ -65,26 +89,7 @@ Two bodies were written **ahead of their second caller**, against this repo's us
 
 What stays repo-owned: the **deploy jobs** in `app`, `infrastructure`, `linear-github-sync` and `discord-presence-bot`.
 
-## 🚀 Setup
-
-Add the stub to the calling repo. It carries the trigger and nothing else:
-
-```yaml
-# .github/workflows/promotion-pr.yml
-name: Promotion PR
-on:
-  push:
-    branches: [dev, stage]
-jobs:
-  promotion-pr:
-    name: Promotion PR
-    uses: kirchDev/workflows/.github/workflows/_promotion-pr.yml@9f3c1a2 # v0.1.0
-```
-
-Then delete the body that used to live in that file. Nothing else moves. List `stage` in the trigger even on a repo that has no `stage` branch — a filter naming a branch that doesn't exist is a no-op, and it keeps the stub identical everywhere.
-
-> [!IMPORTANT]
-> A called workflow's jobs report as `<caller-job> / <body-job>`, so the check that was `Open or update dev → main PR` becomes `Promotion PR / Open or update the draft PR`. Any **branch-protection rule requiring the old name keeps waiting for a check that will never arrive.** Update the rule in the same change, once per repo.
+</details>
 
 ## ✨ Features
 
@@ -125,6 +130,9 @@ Both derive what the old copies configured by hand:
 
 **The dispatch stays in the calling repo, and that is structural.** A reusable workflow cannot be dispatched — `workflow_call` is its only trigger — so the `workflow_dispatch` that lands a queue branch has to live in the stub. ADR-0008's human gate therefore provably remains in the repo it protects, while the 375 lines of picking, approval-checking and patching move here.
 
+<details>
+<summary>The fast-forward stub, and the check it adds</summary>
+
 ```yaml
 # .github/workflows/fast-forward-queue.yml — the stub's job block
 jobs:
@@ -145,23 +153,15 @@ jobs:
 > [!IMPORTANT]
 > `_fast-forward-queue.yml` gained a `Resolve the integration branch` job that the old copies did not have — it is where the `env:` literal went. It reports as a new check, and the three jobs that follow it now depend on it.
 
+</details>
+
 ## 🔐 Reference policy & secrets
 
 **Callers pin a commit SHA**, with the version as a trailing comment — the same way this repo pins `actions/checkout` and `bitwarden/sm-action`. Moving tags are published and work: every release moves `v<major>` onto itself, so `@v0` follows the newest `v0.x.y` exactly as `actions/checkout@v7` does. The stubs use a SHA anyway, and Dependabot raises the bumps — the alias exists for callers who want the other trade.
 
 That review gate is the point. `queue-branch.yml` and `fast-forward-queue.yml` read a PEM from Bitwarden and mint a GitHub App token whose entire purpose is bypassing merge gates on integration branches. On a moving ref, write access to this repo would be unreviewed write access to every repo in the estate.
 
-**Secrets are named, never inherited:**
-
-```yaml
-jobs:
-  queue:
-    uses: kirchDev/workflows/.github/workflows/_queue-branch.yml@9f3c1a2 # v0.1.0
-    secrets:
-      BWS_ACCESS_TOKEN: ${{ secrets.BWS_ACCESS_TOKEN }}
-```
-
-`secrets: inherit` would hand a body everything the calling repo holds — including secrets added long after anyone read the stub.
+**Secrets are named, never inherited.** A stub passes exactly what its body needs, one key at a time — as the queue and release stubs on this page do. `secrets: inherit` would hand a body everything the calling repo holds — including secrets added long after anyone read the stub.
 
 > [!NOTE]
 > The Bitwarden **secret ids** in the workflow bodies are vault identifiers, not credentials: they name an entry that only `BWS_ACCESS_TOKEN` can open, and that token is a GitHub secret which never appears in a file.
@@ -208,6 +208,9 @@ jobs:
       NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
 ```
 
+<details>
+<summary>Which publish body a repo composes on, and the prerelease fix</summary>
+
 Which body a repo composes on:
 
 | Target | Repos | Body | Passes |
@@ -222,6 +225,8 @@ Which body a repo composes on:
 
 The prerelease job is a second call with `prerelease: true`; it gates itself on the branch rather than on `release-created`.
 
+</details>
+
 ## 🧪 CI
 
 CI is the one place where a body is a **job**, not a whole workflow. A single body with `run-test`, `run-coverage`, `needs-postgres` switches would turn every stub into a config file — and a value the caller maintains is a copy, which is the thing this repo exists to remove.
@@ -235,7 +240,10 @@ jobs:
     uses: kirchDev/workflows/.github/workflows/_ci-check.yml@9f3c1a2 # v0.1.0
 ```
 
-**One job per check, and the list is derived.** Each repo already declares its checks in `package.json`, in order — `"check": "pnpm lint && pnpm format && pnpm typecheck && pnpm check:policy"` — and the copied workflows listed those same commands a second time as steps. The body splits the gate script into its `pnpm <task>` calls and fans them out over a matrix, so each check reports on its own as `CI / Check (typecheck)`, they run in parallel, and any one of them can be a required check by itself.
+**The check list is derived, not listed.** Each repo already declares its checks in `package.json`, in order — `"check": "pnpm lint && pnpm format && pnpm typecheck && pnpm check:policy"` — and the copied workflows listed those same commands a second time as steps. The body splits the gate script into its `pnpm <task>` calls and runs each as its own step of a single job, which reports as `CI / Lint & Format`.
+
+<details>
+<summary>Resolving the gate script, the tree-hash markers, and extending a body that almost fits</summary>
 
 It resolves recursively, because a gate can chain another aggregate — `skills` runs `verify`, which calls `check`, which is `lint && format`:
 
@@ -313,6 +321,8 @@ So a repo that needs a body plus one extra step writes its own job instead of fo
 
 > [!NOTE]
 > The bodies here deliberately do **not** use that action. A reusable workflow resolves `./…` against the **caller's** workspace rather than its own repository, so a body would have to name `kirchDev/workflows/…@<ref>` in full — and `uses:` takes no expression, so that ref would be hard-coded. A caller pinning the body to one SHA would then silently run an action from another. Four duplicated setup lines are cheaper than a pin that lies.
+
+</details>
 
 ## 🤝 Contributing
 
