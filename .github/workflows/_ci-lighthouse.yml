@@ -16,6 +16,16 @@ name: CI Lighthouse (reusable)
 # Chrome instances on the same worker contend for CPU, and that contention lands
 # in the very numbers being measured — total blocking time, largest contentful
 # paint. In-process parallelism would buy wall-clock by corrupting the result.
+#
+# WHAT IS MEASURED IS NOT THIS BODY'S BUSINESS, and there is deliberately no
+# `categories` input. Which Lighthouse categories run, and which of them gate,
+# belongs to the caller's own audit config — `app` keeps both in
+# `scripts/audit.config.ts`, where a new category is one line and CI needs no
+# change at all. Adding the input here would split that decision across two
+# files that then have to agree.
+#
+# This body generalises the SHARDING and the MERGE. The measuring stays where
+# the thresholds are.
 on:
   workflow_call:
     inputs:
