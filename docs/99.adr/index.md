@@ -18,3 +18,5 @@ This log holds decisions about **this repository**: what a body may assume, what
 | [ADR-0005](0005-publish-with-one-body-per-target.md)              | Publish with one body per target              | Accepted | 2026-09-01 |
 | [ADR-0006](0006-keep-the-composite-action-out-of-the-bodies.md)   | Keep the composite action out of the bodies   | Accepted | 2026-09-01 |
 | [ADR-0007](0007-run-the-gate-as-one-job-with-a-step-per-check.md) | Run the gate as one job with a step per check | Accepted | 2026-09-01 |
+| [ADR-0008](0008-give-each-reporter-its-own-comment-thread.md)     | Give each reporter its own comment thread     | Accepted | 2026-09-01 |
+| [ADR-0009](0009-write-a-body-before-its-second-caller.md)         | Write a body before its second caller         | Accepted | 2026-09-01 |
