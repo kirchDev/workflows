@@ -1,0 +1,136 @@
+# yaml-language-server: $schema=https://json.schemastore.org/github-workflow.json
+
+name: Release Please (reusable)
+
+# Reusable body. The caller carries the `push` trigger naming its release
+# branch, and reads the outputs below to run whatever publishing it does —
+# npm, Packagist, GoReleaser — which stays in the repo that owns the artifact.
+# See README → Releases for the stub.
+#
+# Runs under the kirchDev Release App rather than GITHUB_TOKEN: a release PR
+# opened by the workflow token raises no `pull_request` event, so nothing would
+# run CI on it.
+on:
+  workflow_call:
+    inputs:
+      config-file:
+        description: Path to the release-please config.
+        required: false
+        type: string
+        default: release-please-config.json
+      manifest-file:
+        description: Path to the release-please manifest.
+        required: false
+        type: string
+        default: .release-please-manifest.json
+      major-alias:
+        description: >-
+          After a release, move the `v<major>` tag onto it, the way
+          `actions/checkout@v7` works.
+        required: false
+        type: boolean
+        default: false
+    secrets:
+      BWS_ACCESS_TOKEN:
+        description: Bitwarden Secrets Manager access token — opens the Release App PEM.
+        required: true
+    outputs:
+      release-created:
+        description: '"true" when this run cut a release — gate any publishing job on it.'
+        value: ${{ jobs.release-please.outputs.release-created }}
+      tag-name:
+        description: Tag of the release that was cut, if any.
+        value: ${{ jobs.release-please.outputs.tag-name }}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  release-please:
+    name: Run release-please
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    outputs:
+      release-created: ${{ steps.release.outputs.release_created }}
+      tag-name: ${{ steps.release.outputs.tag_name }}
+    steps:
+      # DERIVED, not configured: each owner authenticates as a different machine
+      # account and reads only its own `-ci` mirror, so the id follows the owner.
+      # Measured across the estate, two kirchDev repos carried the TitusKirch id
+      # — the same silent misconfiguration the Queue App had, in a second place
+      # nobody had looked. Deriving it makes that class of error impossible.
+      - name: Fetch Release App PEM from Bitwarden
+        uses: bitwarden/sm-action@1238aae8fc64b212641190a9227c8a734ab1a793 # v3.0.1
+        with:
+          access_token: ${{ secrets.BWS_ACCESS_TOKEN }}
+          cloud_region: eu
+          secrets: |
+            ${{ github.repository_owner == 'kirchDev' && '3a3459f0-c986-4ff3-a36b-b4550012d41e' || '29f8317d-29f7-46af-834b-b4550012d477' }} > KIRCHDEV_RELEASE_APP_PEM
+
+      - name: Mint Release App token
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: 'Iv23li3hNqtsZ8fDlwqH'
+          private-key: ${{ env.KIRCHDEV_RELEASE_APP_PEM }}
+
+      - id: release
+        uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
+        with:
+          token: ${{ steps.app-token.outputs.token }}
+          config-file: ${{ inputs.config-file }}
+          manifest-file: ${{ inputs.manifest-file }}
+
+      # release-please cuts exact tags only — `v0.1.0`, never `v0`. The moving
+      # major alias has to be maintained separately, and this is the step that
+      # does it: `@v1` then means "the newest v1.x.y", exactly as
+      # `actions/checkout@v7` does.
+      #
+      # OPT-IN, because only two repos in the estate have anyone pinning their
+      # tags: this one (its bodies) and `coverage-report` (its action). For an
+      # npm package the npm version is what consumers resolve and the git tag is
+      # read by nobody; for an app or a deploy repo, likewise. And for the three
+      # Terraform providers an extra tag is a possible hazard rather than a
+      # no-op — the Terraform Registry reads a repo's tags as its version list,
+      # and `v1` is not valid semver. Defaulting this on would push that tag
+      # into 22 repos to serve two.
+      #
+      # FORCED ON PURPOSE. Moving a tag is normally the thing not to do, and an
+      # alias is the one case where moving it IS the contract — the tag names a
+      # major line, not a release. The exact tags it points at are never touched.
+      - name: Move the major alias
+        if: inputs.major-alias && steps.release.outputs.release_created == 'true'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ steps.release.outputs.tag_name }}
+          SHA: ${{ steps.release.outputs.sha }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${TAG:-}" ] || [ -z "${SHA:-}" ]; then
+            echo "::warning::release-please reported a release without a tag or sha — no alias moved."
+            exit 0
+          fi
+
+          # v1.2.3 -> v1, and 0.x keeps its own line as v0: a 0.x major is not
+          # stable, so callers who want it must ask for it by name.
+          alias="v${TAG#v}"
+          alias="${alias%%.*}"
+
+          if gh api "repos/$GH_REPO/git/ref/tags/$alias" > /dev/null 2>&1; then
+            gh api -X PATCH "repos/$GH_REPO/git/refs/tags/$alias" \
+              -f "sha=$SHA" -F force=true > /dev/null
+            echo "::notice::Moved $alias to $TAG ($SHA)."
+          else
+            gh api -X POST "repos/$GH_REPO/git/refs" \
+              -f "ref=refs/tags/$alias" -f "sha=$SHA" > /dev/null
+            echo "::notice::Created $alias at $TAG ($SHA)."
+          fi
