@@ -1,0 +1,71 @@
+# yaml-language-server: $schema=https://json.schemastore.org/github-workflow.json
+
+name: Publish GoReleaser (reusable)
+
+# Reusable body for the three Terraform providers. The caller runs it after
+# `_release-please.yml`, gated on that body's `release-created` output.
+#
+# The three copies this replaces differed in four to six lines: two action pins
+# and a comment naming the wrong Bitwarden project. Nothing else.
+on:
+  workflow_call:
+    inputs:
+      tag-name:
+        description: Tag to build from, from release-please's `tag-name` output.
+        required: true
+        type: string
+      timeout-minutes:
+        description: Build timeout.
+        required: false
+        type: number
+        default: 20
+    secrets:
+      BWS_ACCESS_TOKEN:
+        description: Bitwarden Secrets Manager access token — opens the GPG signing key.
+        required: true
+
+jobs:
+  goreleaser:
+    name: Build and sign provider artifacts
+    runs-on: ubuntu-latest
+    timeout-minutes: ${{ inputs.timeout-minutes }}
+    permissions:
+      # GoReleaser uploads the built artifacts onto the release it builds from.
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.tag-name }}
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # GPG signing key + passphrase live in Bitwarden SM (project: kirchDev-ci),
+      # same flow as the Release App PEM. Shared by all three providers — unlike
+      # the App PEMs these are not per-owner, since only kirchDev ships providers.
+      - name: Fetch GPG signing secrets from Bitwarden
+        uses: bitwarden/sm-action@1238aae8fc64b212641190a9227c8a734ab1a793 # v3.0.1
+        with:
+          access_token: ${{ secrets.BWS_ACCESS_TOKEN }}
+          cloud_region: eu
+          secrets: |
+            9112a29e-4a70-4c88-a6a7-b462014541e4 > GPG_PRIVATE_KEY
+            aa38c7e5-6d49-4204-a42b-b4620144bcc9 > GPG_PASSPHRASE
+
+      - name: Import GPG key
+        id: import_gpg
+        uses: crazy-max/ghaction-import-gpg@2dc316deee8e90f13e1a351ab510b4d5bc0c82cd # v7.0.0
+        with:
+          gpg_private_key: ${{ env.GPG_PRIVATE_KEY }}
+          passphrase: ${{ env.GPG_PASSPHRASE }}
+
+      - name: Run GoReleaser
+        uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3
+        with:
+          version: '~> v2'
+          args: release --clean
+        env:
+          GPG_FINGERPRINT: ${{ steps.import_gpg.outputs.fingerprint }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
