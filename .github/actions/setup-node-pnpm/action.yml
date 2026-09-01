@@ -55,6 +55,12 @@ runs:
         node-version: ${{ inputs.node-version }}
         cache: pnpm
 
+    # Passed through `env` rather than interpolated into the script: an
+    # interpolated value becomes part of the script TEXT before the shell sees
+    # it, so it can break out of the command it was meant to be. As a variable
+    # it stays a value. Same pattern for every command input in this repo.
     - name: Install dependencies
       shell: bash
-      run: ${{ inputs.install }}
+      env:
+        INSTALL_COMMAND: ${{ inputs.install }}
+      run: bash -c "$INSTALL_COMMAND"

@@ -107,10 +107,14 @@ jobs:
       - name: Install system dependencies
         if: runner.os == 'Linux' && inputs.system-dependencies != ''
         working-directory: ${{ github.workspace }}
+        env:
+          SYSTEM_DEPENDENCIES: ${{ inputs.system-dependencies }}
         run: |
           sudo apt-get update
+          # Word splitting is intended — the input is a package LIST — but the
+          # value reaches the shell as a variable rather than as script text.
           # shellcheck disable=SC2086
-          sudo apt-get install -y ${{ inputs.system-dependencies }}
+          sudo apt-get install -y $SYSTEM_DEPENDENCIES
 
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable

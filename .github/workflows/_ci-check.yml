@@ -87,7 +87,9 @@ jobs:
           cache: pnpm
 
       - name: Install dependencies
-        run: ${{ inputs.install }}
+        env:
+          INSTALL_COMMAND: ${{ inputs.install }}
+        run: bash -c "$INSTALL_COMMAND"
 
       - name: Resolve the checks
         id: resolve

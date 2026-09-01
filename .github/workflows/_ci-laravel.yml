@@ -129,9 +129,14 @@ jobs:
           eval "composer require $args --no-update --no-interaction"
 
       - name: Install Composer dependencies
+        env:
+          LOWEST: ${{ matrix.dependencies == 'lowest' }}
         run: |
-          composer update --prefer-dist --no-progress \
-            ${{ matrix.dependencies == 'lowest' && '--prefer-lowest --prefer-stable' || '' }}
+          if [ "$LOWEST" = "true" ]; then
+            composer update --prefer-dist --no-progress --prefer-lowest --prefer-stable
+          else
+            composer update --prefer-dist --no-progress
+          fi
 
       - name: Run Pest
         run: composer test
@@ -232,7 +237,9 @@ jobs:
       # coverage-report action reads. The `--min` gate fails the run here;
       # reporting it to the PR is `_coverage.yml`'s job.
       - name: Run Pest with coverage
-        run: vendor/bin/pest --coverage --coverage-cobertura=coverage.xml --min=${{ inputs.min-coverage }}
+        env:
+          MIN_COVERAGE: ${{ inputs.min-coverage }}
+        run: vendor/bin/pest --coverage --coverage-cobertura=coverage.xml --min="$MIN_COVERAGE"
 
       - name: Upload the coverage report
         uses: actions/upload-artifact@v7

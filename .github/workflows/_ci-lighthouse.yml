@@ -198,12 +198,15 @@ jobs:
       # load on a runner that has done nothing else, and reusing a build means
       # reusing whatever state producing it left behind.
       - name: Build
-        run: ${{ inputs.build-command }}
+        env:
+          BUILD_COMMAND: ${{ inputs.build-command }}
+        run: bash -c "$BUILD_COMMAND"
 
       - name: Audit
         env:
           TARGET: ${{ matrix.target }}
-        run: ${{ inputs.audit-command }}
+          AUDIT_COMMAND: ${{ inputs.audit-command }}
+        run: bash -c "$AUDIT_COMMAND"
 
       # One artifact per shard, named after the target, so the summary job can
       # collect them with a pattern. Uploaded even on failure: a red audit is
@@ -257,7 +260,8 @@ jobs:
       - name: Merge the shard reports
         env:
           REPORTS: tmp/lighthouse
-        run: ${{ inputs.merge-command }}
+          MERGE_COMMAND: ${{ inputs.merge-command }}
+        run: bash -c "$MERGE_COMMAND"
 
       - name: Upload the merged report
         uses: actions/upload-artifact@v7

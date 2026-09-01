@@ -171,6 +171,7 @@ jobs:
           GH_REPO: ${{ github.repository }}
           PR: ${{ github.event.pull_request.number }}
           BRANCH: ${{ steps.existing.outputs.branch }}
+          CUT_THIS_RUN: ${{ steps.existing.outputs.create }}
         run: |
           set -euo pipefail
           gh pr edit "$PR" --base "$BRANCH"
@@ -181,5 +182,5 @@ jobs:
             echo "|----------|-------|"
             echo "| PR | #$PR |"
             echo "| Base | \`$BRANCH\` |"
-            echo "| Cut this run | \`${{ steps.existing.outputs.create }}\` |"
+            echo "| Cut this run | \`$CUT_THIS_RUN\` |"
           } >> "$GITHUB_STEP_SUMMARY"

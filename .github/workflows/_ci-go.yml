@@ -90,4 +90,6 @@ jobs:
         if: inputs.acceptance-tests
         env:
           TF_ACC: '1'
-        run: go test ${{ inputs.acceptance-path }} -run TestAcc -timeout ${{ inputs.acceptance-timeout }}
+          ACCEPTANCE_PATH: ${{ inputs.acceptance-path }}
+          ACCEPTANCE_TIMEOUT: ${{ inputs.acceptance-timeout }}
+        run: go test "$ACCEPTANCE_PATH" -run TestAcc -timeout "$ACCEPTANCE_TIMEOUT"

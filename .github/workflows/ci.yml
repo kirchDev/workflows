@@ -11,6 +11,9 @@ on:
       - dev
     types: [opened, synchronize, reopened, ready_for_review]
 
+permissions:
+  contents: read
+
 jobs:
   check:
     name: CI

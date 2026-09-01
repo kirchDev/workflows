@@ -119,10 +119,14 @@ jobs:
         run: pnpm exec playwright install --with-deps chromium
 
       - name: Build
-        run: ${{ inputs.build-command }}
+        env:
+          BUILD_COMMAND: ${{ inputs.build-command }}
+        run: bash -c "$BUILD_COMMAND"
 
       - name: Run the E2E suite
-        run: ${{ inputs.test-command }}
+        env:
+          TEST_COMMAND: ${{ inputs.test-command }}
+        run: bash -c "$TEST_COMMAND"
 
       # A failed browser run is unreadable without its trace, and the report is
       # the only artefact that survives the runner.
