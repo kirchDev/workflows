@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.1.1](https://github.com/kirchDev/workflows/compare/v0.1.0...v0.1.1) (2026-09-01)
+
+
+### Bug Fixes
+
+* **ci:** run the analysis when a draft becomes ready ([edeffcd](https://github.com/kirchDev/workflows/commit/edeffcd93e15380e5db8880eb035a5ef2be5a1ad))
+* **ci:** scan once per change instead of twice ([2008c11](https://github.com/kirchDev/workflows/commit/2008c11ae01fb0d5052d6fed8a589379cc244f56))
+
 ## 0.1.0 (2026-09-01)
 
 
