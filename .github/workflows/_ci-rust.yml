@@ -59,8 +59,12 @@ on:
         type: number
         default: 30
 
+# THE GROUP CARRIES THIS BODY'S NAME, and that is not decoration. In a called
+# workflow `github.workflow` is the CALLER's name, so two bodies invoked by the
+# same caller would share one group and cancel each other — the second to start
+# would kill the first, silently, and the run would report a job that never ran.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  group: ${{ github.workflow }}-ci-rust-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
