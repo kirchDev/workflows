@@ -1,0 +1,122 @@
+# yaml-language-server: $schema=https://json.schemastore.org/github-workflow.json
+
+# Reusable body. Callers carry the trigger; this file only ever runs via
+# `workflow_call`. See README → Promotion PR for the caller stub.
+name: Promotion PR (reusable)
+
+on:
+  workflow_call:
+    outputs:
+      target:
+        description: Branch the promotion PR targets — `stage` or `main`.
+        value: ${{ jobs.open-pr.outputs.target }}
+      pull-request-number:
+        description: Number of the open promotion PR, or empty if none was needed.
+        value: ${{ jobs.open-pr.outputs.pull-request-number }}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  open-pr:
+    name: Open or update the draft PR
+    runs-on: ubuntu-latest
+    outputs:
+      target: ${{ steps.topology.outputs.target }}
+      pull-request-number: ${{ steps.pr.outputs.number }}
+    steps:
+      # The branch topology *is* the configuration: a repo with a `stage`
+      # branch is on `dev → stage → main`, one without is on `dev → main`.
+      # Creating or deleting `stage` moves a repo between the two flows with
+      # no file changing anywhere — which is what keeps a single stub correct
+      # for every repo, and what stops a second copied variant existing.
+      - name: Resolve the promotion target
+        id: topology
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          SOURCE: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+
+          if gh api "repos/$GH_REPO/branches/stage" --silent 2>/dev/null; then
+            stage_exists=true
+          else
+            stage_exists=false
+          fi
+
+          case "$SOURCE" in
+            stage)
+              # `stage` only exists on the three-stage flow, so this is
+              # unambiguous without consulting the topology at all.
+              target=main
+              ;;
+            dev)
+              if [ "$stage_exists" = true ]; then target=stage; else target=main; fi
+              ;;
+            *)
+              echo "::error::Promotion PR ran on '$SOURCE'. It only promotes from 'dev' or 'stage' — check the caller's branch filter."
+              exit 1
+              ;;
+          esac
+
+          echo "target=$target" >> "$GITHUB_OUTPUT"
+          echo "Topology: stage exists = $stage_exists → promoting $SOURCE into $target."
+
+      # A repo that gains or loses `stage` while a promotion PR is open would
+      # otherwise silently keep the old target. Retargeting the PR here would
+      # be the tidy move, but it rewrites a PR a human may already be
+      # reviewing — so this warns and leaves the decision to a person.
+      - name: Warn on a stale promotion PR
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          SOURCE: ${{ github.ref_name }}
+          TARGET: ${{ steps.topology.outputs.target }}
+        run: |
+          set -euo pipefail
+
+          stale=$(gh pr list --head "$SOURCE" --state open \
+            --json number,baseRefName \
+            --jq "[.[] | select(.baseRefName != \"$TARGET\")] | .[0].number")
+
+          if [ -n "$stale" ]; then
+            echo "::warning::PR #$stale promotes '$SOURCE' to a branch that is no longer the target (now '$TARGET'). The branch topology changed while it was open — retarget or close it by hand."
+          fi
+
+      - name: Ensure the draft PR exists
+        id: pr
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          SOURCE: ${{ github.ref_name }}
+          TARGET: ${{ steps.topology.outputs.target }}
+        run: |
+          set -euo pipefail
+
+          existing=$(gh pr list --base "$TARGET" --head "$SOURCE" --state open \
+            --json number --jq '.[0].number')
+
+          if [ -n "$existing" ]; then
+            echo "PR #$existing already open — the push updated it automatically."
+            echo "number=$existing" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # `gh pr create` has no --json; it prints the PR URL, whose last
+          # path segment is the number.
+          url=$(gh pr create \
+            --base "$TARGET" \
+            --head "$SOURCE" \
+            --draft \
+            --title "chore: merge $SOURCE into $TARGET" \
+            --body "Automated rollup PR for changes accumulated on \`$SOURCE\`. Mark ready when you want it to land — and **use a merge commit, not squash**, so individual \`feat:\`/\`fix:\` commits stay visible to release-please.")
+          number="${url##*/}"
+
+          echo "Opened PR #$number ($SOURCE → $TARGET)."
+          echo "number=$number" >> "$GITHUB_OUTPUT"
