@@ -91,6 +91,12 @@ on:
         value: ${{ jobs.summary.outputs.artifact }}
 
 jobs:
+  # DELIBERATELY IMPORT-LIGHT: checkout and a bare Node, no dependency install.
+  # A shard list is a handful of strings, and `pnpm install` to read them would
+  # put ~20s on the critical path of every audit. `targets-command` therefore
+  # has to run on Node alone — in `app` that is a script importing nothing but
+  # its own config. A command needing installed dependencies belongs in the
+  # shard job, not here.
   targets:
     name: Plan the Audit
     runs-on: ubuntu-latest
