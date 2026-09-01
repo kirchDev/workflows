@@ -1,33 +1,26 @@
 {
   "$schema": "https://www.schemastore.org/package.json",
-  "name": "scaffold",
-  "version": "0.4.1",
-  "description": "Language-agnostic baseline template for new kirchDev repositories.",
+  "name": "workflows",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Central reusable GitHub Actions workflows for the kirchDev estate.",
   "keywords": [
-    "commitlint",
-    "conventional-commits",
-    "dependabot",
-    "github-template",
-    "husky",
+    "actions",
+    "ci",
+    "github-actions",
     "kirchdev",
-    "nodejs",
-    "oxfmt",
-    "oxlint",
-    "pnpm",
-    "release-please",
-    "scaffold",
-    "template",
-    "typescript"
+    "reusable-workflows",
+    "workflow-call"
   ],
-  "homepage": "https://github.com/TitusKirch/scaffold#readme",
+  "homepage": "https://github.com/kirchDev/workflows#readme",
   "bugs": {
-    "url": "https://github.com/TitusKirch/scaffold/issues"
+    "url": "https://github.com/kirchDev/workflows/issues"
   },
   "license": "MIT",
   "author": "Titus Kirch <titus.kirch@kirch.dev>",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/TitusKirch/scaffold.git"
+    "url": "git+https://github.com/kirchDev/workflows.git"
   },
   "type": "module",
   "scripts": {
