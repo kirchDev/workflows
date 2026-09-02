@@ -10,13 +10,19 @@ on:
       - main
       - dev
     types: [opened, synchronize, reopened, ready_for_review]
-    # A change that touches only prose cannot break a lint, a typecheck or the
-    # policy parity script. Workflows are NOT excluded: they are this repo's
-    # product, and `pnpm lint:actions` is part of the gate.
-    paths-ignore:
-      - '**.md'
-      - 'docs/**'
-      - LICENSE
+
+# NO `paths-ignore`, AND THAT IS THE POINT OF THE GATE. A change touching only
+# prose cannot break a lint — but a workflow that does not TRIGGER reports no
+# check at all, and a required check that never reports does not pass the merge,
+# it blocks it forever. `CI / Gate` is meant to be a required check, so this
+# workflow has to run on every pull request, including a README-only one.
+#
+# Measured trade: a docs-only pull request now costs one gate run, roughly a
+# minute, where it used to cost nothing. The alternative is a rule that
+# deadlocks exactly the pull requests it has no reason to stop — which three
+# repos in the estate carried, unnoticed, until this was measured. Should that
+# minute ever matter, the answer is skipping INSIDE the body while the gate
+# still reports, never a filter on the trigger.
 
 permissions:
   contents: read
