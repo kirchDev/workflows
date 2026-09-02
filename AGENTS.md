@@ -171,7 +171,13 @@ A body has no trigger of its own, so this repo needs a stub like anybody else. I
 | `_publish-npm.yml`       |           4 |        4 | action pins, one build script, and a fix 2 of 4 never got   | ✅ reusable |
 | `_publish-goreleaser.yml` |          3 |        3 | two action pins and a wrong comment                         | ✅ reusable |
 | `_ci-check.yml`          |          11 |        ~8 | pins, and a step list that duplicates `package.json`       | ✅ reusable |
-| `ci.yml` (families)      |          14 |       16 | genuinely stack-dependent — one body per family            | 📋 next     |
+| `_ci-node.yml` / `_ci-laravel.yml` / `_ci-go.yml` / `_ci-rust.yml` | 11 | 13 | genuinely stack-dependent — one body per family | ✅ reusable |
+| `ci.yml` (the three outliers) |     3 |        3 | `app`, `gildstone`, `infrastructure` compose from bodies    | 📋 next     |
+
+**Where the rollout actually stands.** Every repo in the estate except `app`, `gildstone` and `infrastructure` now calls the bodies — the last of them landed in the fourth wave, at `v0.1.3`, and that wave needed **no new body release**: all three of its findings were in the calling repos, not in a body. Two of them are worth carrying forward, because both are protection policy rather than YAML and neither shows up in a workflow run:
+
+- **A required check on the old name blocks every future PR, silently.** `envprism`'s `main` ruleset still lists `Typecheck` / `Lint & Format` / `Test` / `Build`; the gate now reports `CI / Lint & Format` and nothing else. The promotion PR merged because the rule matched nothing at all — the block arrives on the *next* PR. The table below already says to fix the rule in the same change; this is what happens when nobody does.
+- **A promotion can be blocked by history that predates the migration.** `discord-bot`'s `main` requires signed commits, and its `dev` carries ~60 unsigned commits that never reached `main`. The stub is green and the branch is mergeable; the policy is what refuses. That is a decision for a human, never an `--admin` merge taken on the way past.
 
 **Variant counts overstate divergence.** Every one of the queue workflows' variants reduces to values the body can derive for itself: `INTEGRATION_BRANCH` from whether `dev` exists, the Bitwarden id from `github.repository_owner`. Neither becomes an input — an input a caller maintains is a copy, and copies drift.
 
@@ -205,7 +211,7 @@ All of it is built: `_verified.yml` / `_record-verified.yml` (the tree-hash mark
 
 **Deliberately NOT bodies, measured rather than assumed:**
 
-- **`render` needs no body at all.** It is `pnpm render` followed by `git diff --exit-code README.md` — a generated file asserting it is current. That is a gate task, so it belongs in the repo's `check` script, where `_ci-check.yml` picks it up as its own step. Same answer as the `.gitignore` drift check.
+- **`render` needs no body, and — measured — no gate slot either.** It is `pnpm render` followed by `git diff --exit-code README.md`, a generated file asserting it is current, which reads exactly like a gate task. It is not one: `TitusKirch/TitusKirch`'s renderer calls the GitHub API for every project it lists, and `_ci-check.yml` runs its tasks with **no credential**, deliberately. Moving it into `check` therefore turned the gate red rather than centralising anything, and the assertion went back to a job of that repo's own — the `_ci-check.yml` caller beside it, which is the documented "body plus one thing" shape. The `.gitignore` drift check is the case this was confused with, and it genuinely needs nothing: it reads only files.
 - **`quality-report` is superseded rather than centralised.** It posted ONE pull-request comment carrying coverage and the Lighthouse summary together, to avoid a second thread. That coupling is exactly what stopped either half from becoming a body: a repo calling `_coverage.yml` beside it would have got the second thread anyway. **Settled the other way — one thread per reporter.** `_coverage.yml` keeps the `coverage-report` marker its action already writes, `_ci-lighthouse.yml` posts under `lighthouse`, and the two never meet. Two threads is the price; it buys two bodies that neither know nor need each other.
 - **The four deploy jobs.** Repo-owned by design — they touch environments, not code.
 
@@ -226,9 +232,12 @@ Each of these lands once, per repo, at the moment its stub replaces its copy. No
 | every repo | Check names become `<caller-job> / <body-job>` | Update the branch-protection rule; a rule on the old name waits forever |
 | `app` | Its single `quality-report` comment is replaced by two sticky threads — `coverage-report` and `lighthouse` | Drop the combined job; nothing else consumes it |
 | `app` | `_ci-lighthouse.yml` reports one job per shard plus a `summary`, where the copy had `audit-targets` / `audit` / `audit-summary` | Same branch-protection edit as above |
-| `glimpse` | `_ci-rust.yml` renames `deny` and `build`, and runs `fmt`/`clippy`/`test` inside one job per platform | Accepted deliberately — the alternative was never centralising Rust |
+| `glimpse` | `_ci-rust.yml` renames `deny` and `build`, and runs `fmt`/`clippy`/`test` inside one job per platform | Accepted deliberately — the alternative was never centralising Rust. The Tauri link stays a repo-local `tauri` job on `needs: rust`: it builds the Nuxt frontend into the binary, which no other repo does |
 | `coverage-report`, `vite-plugin-iconify-bundle`, `forgemap`, `envprism` | Prerelease versions start deriving from the last release rather than `package.json` | Nothing — two of the four gain a fix, the other two keep their behaviour |
 | `fast-forward-queue.yml` callers | A new `Resolve the integration branch` check appears | Add it to branch protection if the queue checks are required |
+| `TitusKirch/TitusKirch` | The README render assertion cannot move into the gate — it needs a token `_ci-check.yml` does not hand out | Keep it as a job beside the `_ci-check.yml` caller |
+| `discord-bot` | The gate now runs `typecheck`, which needs the generated Prisma client and a `DATABASE_URL` before `prisma.config.ts` will load | Pass both through the body's `install` input |
+| `terraform-provider-laravelforge` | `_ci-go.yml` brings `golangci-lint`, which the copy never ran | Expect real findings; fix them in the migration PR |
 
 **Three repos are a fix rather than a port**, and their migration PR should say so: `coverage-report`, `vite-plugin-iconify-bundle` and `TitusKirch/hike-recap` carry the 189-line queue workflow with no App-token path at all.
 
