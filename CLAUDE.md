@@ -177,7 +177,16 @@ A body has no trigger of its own, so this repo needs a stub like anybody else. I
 | `_ci-check.yml`          |          11 |        ~8 | pins, and a step list that duplicates `package.json`       | ✅ reusable |
 | `_cleanup-sync-branch.yml` |        2 |        1 | a two-line comment, and nothing else                        | ✅ reusable |
 | `_ci-node.yml` / `_ci-laravel.yml` / `_ci-go.yml` / `_ci-rust.yml` | 11 | 13 | genuinely stack-dependent — one body per family | ✅ reusable |
-| `ci.yml` (the three outliers) |     3 |        3 | `app`, `gildstone`, `infrastructure` compose from bodies    | 📋 next     |
+| `ci.yml` (the three outliers) |     3 |        3 | `app`, `gildstone`, `infrastructure` compose from bodies    | ✅ composed |
+
+**The rollout is complete: all 25 repos call the bodies.** What stayed behind was checked one by one rather than assumed, and each remaining workflow is a single instance shaped like its repo — `app`'s `cv-pdf`, `og-image` and `deploy`, `glimpse`'s experiment releases, `infrastructure`'s label sync, `skills`' conformance run, `hike-recap`'s renderer. The one duplicate that turned up in that sweep became `_cleanup-sync-branch.yml`.
+
+**Where the abstraction deliberately stops, measured rather than assumed:**
+
+- **`gildstone`'s test bodies are a different gattung, not a missing migration.** `_ci-node.yml` tests a library across Node versions; `gildstone`'s fans a turborepo out over `build`/`typecheck`/`lint`/`format` and sizes each matrix leg separately. `_ci-laravel.yml` tests a package across a PHP × Laravel support matrix; `gildstone` tests an application on its one version. Forcing them together produces the switch-laden body this repo already rejected once.
+- **`app`'s `lint` and `test` are app-shaped.** `lint` pushes its own fixes back onto the branch; `test` spans the SSR bundle, Storybook, larastan, a PHP suite under xdebug and Playwright in one job. Neither is a body anyone else would call.
+- **`infrastructure`'s `plan` and `apply` touch reality.** Real credentials, the real S3 backend, a serialized state lock, and a 250-line paginated comment one repo reads. `_ci-tofu.yml` took the generic half — `fmt`, `validate`, `tflint`, `trivy` — and stopped there.
+- **`sync-projects.yml` is a genuine variant**, 206 lines against 87 in the two repos that carry it. Two callers is the threshold for a body; two *different* files is not.
 
 **Where the rollout actually stands.** Every repo in the estate except `app`, `gildstone` and `infrastructure` now calls the bodies — the last of them landed in the fourth wave, at `v0.1.3`, and that wave needed **no new body release**: all three of its findings were in the calling repos, not in a body. Two of them are worth carrying forward, because both are protection policy rather than YAML and neither shows up in a workflow run:
 
@@ -275,6 +284,8 @@ Carried over from the build brief; none of these is settled.
 
 - ~~**Does `skipped` satisfy a required check?**~~ **Retired rather than answered.** The `Gate` job runs under `if: always()`, so it is never skipped and always reports; a required check now names it and nothing else. The tree-hash markers still lean on the old behaviour for the caller's *own* jobs — that part remains worth verifying before `_verified.yml` becomes estate-wide policy.
 - **Concurrency group scope.** `group: fast-forward-queue` is unqualified. It should evaluate in the caller's scope; if it does not, two repos draining at once serialise against each other for nothing. Cheap to verify, expensive to discover.
+- **`check:inputs` only reads this repo's own stubs.** A caller elsewhere pins a SHA, so the same mistake — passing an input the pinned body does not define — is still caught only by a run. It cost `app` two red runs before the check existed. Whether that is worth solving from the caller's side is open.
+- **A required check has to be typed, not picked.** `ci.yml` triggers on `pull_request` alone, so `CI / Gate` never reports on `main` and GitHub's ruleset picker cannot offer it. Adding a `push` trigger would fix the picker and double every run — the wrong trade, but the alternative is a name a human has to spell correctly 25 times.
 - **Job names are no longer the branch-protection interface — `Gate` is.** Centralising renamed every check to `<caller-job> / <body-job>` once; `Gate` is what stops that from ever having to happen again. A body's other job names are now free to change.
 - **release-please `node` vs `simple`.** See the release-please bullet above.
 
