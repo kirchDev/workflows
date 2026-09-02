@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.3.0](https://github.com/kirchDev/workflows/compare/v0.2.0...v0.3.0) (2026-09-02)
+
+
+### Features
+
+* **ci:** clean up merged release-please branches in the body ([ab7aa43](https://github.com/kirchDev/workflows/commit/ab7aa433a6d1e0208148a6fded930ae191c5cd65))
+* **ci:** let a caller name the runner its jobs run on ([97df12c](https://github.com/kirchDev/workflows/commit/97df12c12dea7930d6349fc6b24e5fb836a3ea2e))
+
 ## [0.2.0](https://github.com/kirchDev/workflows/compare/v0.1.3...v0.2.0) (2026-09-02)
 
 
