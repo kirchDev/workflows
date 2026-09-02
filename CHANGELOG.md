@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.7.0](https://github.com/kirchDev/workflows/compare/v0.6.0...v0.7.0) (2026-09-02)
+
+
+### Features
+
+* **ci:** give the generator the caller's own token ([6f83e36](https://github.com/kirchDev/workflows/commit/6f83e361f3a8bceac9da4c1a956a1e4253ae9cd5))
+* **ci:** let the change check decide who gets assigned ([2a0d17a](https://github.com/kirchDev/workflows/commit/2a0d17a95724aa61f431a1ccf5cca575693a0c06))
+
 ## [0.6.0](https://github.com/kirchDev/workflows/compare/v0.5.0...v0.6.0) (2026-09-02)
 
 
