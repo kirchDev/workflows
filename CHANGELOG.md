@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.0](https://github.com/kirchDev/workflows/compare/v0.4.0...v0.5.0) (2026-09-02)
+
+
+### Features
+
+* **ci:** let the gate body install PHP for a Laravel repo's Pint ([51880db](https://github.com/kirchDev/workflows/commit/51880dba3034f355b59a847c25f8073136098997))
+
 ## [0.4.0](https://github.com/kirchDev/workflows/compare/v0.3.0...v0.4.0) (2026-09-02)
 
 
