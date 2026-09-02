@@ -156,11 +156,21 @@ jobs:
         if: inputs.setup-command != ''
         env:
           SETUP_COMMAND: ${{ inputs.setup-command }}
+          # A generator that regenerates from live data needs to ask for it —
+          # `TitusKirch/TitusKirch`'s README renderer queries the API once per
+          # project it lists. This is the CALLER's own automatic token, so it
+          # carries exactly the permissions that caller granted, and nothing more.
+          GITHUB_TOKEN: ${{ github.token }}
         run: bash -c "$SETUP_COMMAND"
 
       - name: Rebuild
         env:
           BUILD_COMMAND: ${{ inputs.build-command }}
+          # A generator that regenerates from live data needs to ask for it —
+          # `TitusKirch/TitusKirch`'s README renderer queries the API once per
+          # project it lists. This is the CALLER's own automatic token, so it
+          # carries exactly the permissions that caller granted, and nothing more.
+          GITHUB_TOKEN: ${{ github.token }}
         run: bash -c "$BUILD_COMMAND"
 
       # Scoped to the declared paths, so a generator that also touches a lockfile
@@ -187,6 +197,7 @@ jobs:
         if: inputs.changed-command != ''
         env:
           CHANGED_COMMAND: ${{ inputs.changed-command }}
+          GITHUB_TOKEN: ${{ github.token }}
         run: bash -c "$CHANGED_COMMAND"
 
       # Only when there is a pull request to open — a repo whose artifact is
