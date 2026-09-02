@@ -13,6 +13,15 @@ name: Publish npm (reusable)
 on:
   workflow_call:
     inputs:
+      runner:
+        description: >-
+          Runner label for this body's jobs. THE ONE THING A BODY CANNOT DERIVE:
+          nothing in a repository states which fleet it belongs to, and the three
+          repos that run on Blacksmith chose that deliberately rather than
+          inheriting it. Default keeps every other caller on GitHub-hosted.
+        required: false
+        type: string
+        default: ubuntu-latest
       tag-name:
         description: Tag to publish from, from release-please's `tag-name` output. Required for the stable publish.
         required: false
@@ -46,7 +55,7 @@ on:
 jobs:
   publish:
     name: ${{ inputs.prerelease && 'Publish prerelease' || 'Publish stable release' }}
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.runner }}
     permissions:
       contents: read
       # NOT ONLY FOR PROVENANCE: every package in the estate publishes through

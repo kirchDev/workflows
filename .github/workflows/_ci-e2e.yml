@@ -17,6 +17,15 @@ name: CI E2E (reusable)
 on:
   workflow_call:
     inputs:
+      runner:
+        description: >-
+          Runner label for this body's jobs. THE ONE THING A BODY CANNOT DERIVE:
+          nothing in a repository states which fleet it belongs to, and the three
+          repos that run on Blacksmith chose that deliberately rather than
+          inheriting it. Default keeps every other caller on GitHub-hosted.
+        required: false
+        type: string
+        default: ubuntu-latest
       build-command:
         description: Command that builds the app under test.
         required: true
@@ -64,7 +73,7 @@ on:
 jobs:
   e2e:
     name: E2E check
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.runner }}
     timeout-minutes: ${{ inputs.timeout-minutes }}
     permissions:
       contents: read
@@ -159,7 +168,7 @@ jobs:
     name: Gate
     needs: [e2e]
     if: always()
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.runner }}
     permissions: {}
     steps:
       # `skipped` PASSES, deliberately. This body skips what the repo has no

@@ -11,6 +11,15 @@ name: CI Go (reusable)
 on:
   workflow_call:
     inputs:
+      runner:
+        description: >-
+          Runner label for this body's jobs. THE ONE THING A BODY CANNOT DERIVE:
+          nothing in a repository states which fleet it belongs to, and the three
+          repos that run on Blacksmith chose that deliberately rather than
+          inheriting it. Default keeps every other caller on GitHub-hosted.
+        required: false
+        type: string
+        default: ubuntu-latest
       golangci-lint-version:
         description: golangci-lint version to run.
         required: false
@@ -45,7 +54,7 @@ concurrency:
 jobs:
   go:
     name: Go Build & Test
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.runner }}
     timeout-minutes: 20
     permissions:
       contents: read
@@ -118,7 +127,7 @@ jobs:
     name: Gate
     needs: [go]
     if: always()
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.runner }}
     permissions: {}
     steps:
       # `skipped` PASSES, deliberately. This body skips what the repo has no

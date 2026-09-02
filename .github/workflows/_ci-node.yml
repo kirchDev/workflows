@@ -16,6 +16,15 @@ name: CI Node (reusable)
 on:
   workflow_call:
     inputs:
+      runner:
+        description: >-
+          Runner label for this body's jobs. THE ONE THING A BODY CANNOT DERIVE:
+          nothing in a repository states which fleet it belongs to, and the three
+          repos that run on Blacksmith chose that deliberately rather than
+          inheriting it. Default keeps every other caller on GitHub-hosted.
+        required: false
+        type: string
+        default: ubuntu-latest
       node-versions:
         description: JSON array of Node versions to test across.
         required: false
@@ -45,7 +54,7 @@ concurrency:
 jobs:
   resolve:
     name: Resolve the jobs
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.runner }}
     permissions:
       contents: read
     if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
@@ -74,7 +83,7 @@ jobs:
     name: Typecheck (Node ${{ matrix.node }})
     needs: resolve
     if: needs.resolve.outputs.typecheck == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.runner }}
     permissions:
       contents: read
     strategy:
@@ -95,7 +104,7 @@ jobs:
     name: Test (Node ${{ matrix.node }})
     needs: resolve
     if: needs.resolve.outputs.test == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.runner }}
     permissions:
       contents: read
     strategy:
@@ -127,7 +136,7 @@ jobs:
     name: Build
     needs: resolve
     if: needs.resolve.outputs.build == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.runner }}
     permissions:
       contents: read
     steps:
@@ -160,7 +169,7 @@ jobs:
     name: Gate
     needs: [resolve, typecheck, test, build]
     if: always()
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.runner }}
     permissions: {}
     steps:
       # `skipped` PASSES, deliberately. This body skips what the repo has no

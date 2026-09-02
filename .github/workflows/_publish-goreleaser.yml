@@ -10,6 +10,15 @@ name: Publish GoReleaser (reusable)
 on:
   workflow_call:
     inputs:
+      runner:
+        description: >-
+          Runner label for this body's jobs. THE ONE THING A BODY CANNOT DERIVE:
+          nothing in a repository states which fleet it belongs to, and the three
+          repos that run on Blacksmith chose that deliberately rather than
+          inheriting it. Default keeps every other caller on GitHub-hosted.
+        required: false
+        type: string
+        default: ubuntu-latest
       tag-name:
         description: Tag to build from, from release-please's `tag-name` output.
         required: true
@@ -27,7 +36,7 @@ on:
 jobs:
   goreleaser:
     name: Build and sign provider artifacts
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.runner }}
     timeout-minutes: ${{ inputs.timeout-minutes }}
     permissions:
       # GoReleaser uploads the built artifacts onto the release it builds from.
