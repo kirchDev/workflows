@@ -197,7 +197,14 @@ jobs:
   gate:
     name: Gate
     needs: [check]
-    if: always()
+    # `!cancelled()` RATHER THAN `always()`, and the difference is not cosmetic.
+    # Under `always()` this job still runs while concurrency is cancelling the run
+    # around it, sees `cancelled` in the results and reports a FAILURE — turning a
+    # superseded run, which GitHub reports neutrally, into a red required check.
+    # This way the gate is cancelled with the run it belongs to, and the run that
+    # superseded it reports under the same name. A job cancelled on its own (a
+    # timeout, say) still fails the gate, which is correct.
+    if: ${{ !cancelled() }}
     runs-on: ${{ inputs.runner }}
     permissions: {}
     steps:
