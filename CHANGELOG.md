@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.6.0](https://github.com/kirchDev/workflows/compare/v0.5.0...v0.6.0) (2026-09-02)
+
+
+### Features
+
+* **ci:** add a body for regenerating a file and opening a PR ([de4cc4c](https://github.com/kirchDev/workflows/commit/de4cc4cb72f1202979b0a577443d114d73954980))
+* **ci:** let a caller answer whether the regenerated file really changed ([bcdb23c](https://github.com/kirchDev/workflows/commit/bcdb23ce80a2e1e385a3ab08cf32a358268883b9))
+
 ## [0.5.0](https://github.com/kirchDev/workflows/compare/v0.4.0...v0.5.0) (2026-09-02)
 
 
