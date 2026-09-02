@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.4.0](https://github.com/kirchDev/workflows/compare/v0.3.0...v0.4.0) (2026-09-02)
+
+
+### Features
+
+* **ci:** add a body for the bot sync-branch cleanup ([02436f0](https://github.com/kirchDev/workflows/commit/02436f0d750fb26b7ff38b3c97273bf491d1ce9b))
+* prove every caller input exists on the body it calls ([f2f54fe](https://github.com/kirchDev/workflows/commit/f2f54fe8a82d5faf5510408cecaea49eb96c982a))
+
 ## [0.3.0](https://github.com/kirchDev/workflows/compare/v0.2.0...v0.3.0) (2026-09-02)
 
 
