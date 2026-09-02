@@ -1,0 +1,252 @@
+# yaml-language-server: $schema=https://json.schemastore.org/github-workflow.json
+
+name: Open a PR for a Regenerated File (reusable)
+
+# Regenerate something, and open a pull request only if it actually changed.
+#
+# FOUR REPOS SOLVE THIS, IN THREE DIFFERENT WAYS, AND A FOURTH GAVE UP — measured
+# across the estate: `app` twice through `peter-evans/create-pull-request`,
+# `TitusKirch/TitusKirch` and `meta` each by hand through the Git and Contents
+# APIs, and `gildstone` disabled its attempt entirely. That is not four copies of
+# a file; it is four answers to one rule.
+#
+# THE RULE IS BRANCH PROTECTION, and it is why none of them could simply commit:
+#
+#   1. `main` and `dev` require SIGNED commits, and `git commit` in a runner signs
+#      nothing. A commit written through the API is signed by GitHub itself, which
+#      is what `sign-commits: true` asks for.
+#   2. A push authenticated with GITHUB_TOKEN triggers NO workflows, so the pull
+#      request would arrive with no CI having run on it. Hence the App token.
+#
+# The generator stays with the repo — Playwright, poppler-utils, a Laravel boot,
+# a README renderer — and reaches in as `build-command`, the same shape
+# `_ci-e2e.yml` and `_ci-lighthouse.yml` already use. What is centralised is the
+# tail: did anything change, mint a token, open or update the pull request.
+on:
+  workflow_call:
+    inputs:
+      build-command:
+        description: >-
+          Command that regenerates the files. Runs after the standard Node
+          install; anything further the generator needs belongs in `setup-command`.
+        required: true
+        type: string
+      paths:
+        description: >-
+          Newline-separated paths the generator writes. Both the change detection
+          and the pull request are scoped to exactly these — a generator that
+          dirties anything else does not drag it along.
+        required: true
+        type: string
+      changed-command:
+        description: >-
+          Decides whether anything really changed, writing `true` or `false` to
+          `$GITHUB_OUTPUT` as `changed`. Empty uses a plain `git diff` over
+          `paths`, which is right for a text artifact — and wrong for at least
+          one binary one: `app`'s CV renders a footer in a system font, and the
+          runner's build of DejaVu Sans differs from a developer's in sixteen
+          bytes of its `head` table. Identical outlines, different file, a pull
+          request every single run. That repo compares the RENDERED pages
+          instead, and that knowledge belongs to it rather than here.
+        required: false
+        type: string
+        default: ''
+      branch:
+        description: Branch the pull request is opened from.
+        required: true
+        type: string
+      title:
+        description: >-
+          Pull request title, also used as the commit message. `fix:` rather than
+          `chore:` where the artifact ships — only feat and fix cut a release, and
+          a chore would leave the deployed file stale until something unrelated
+          triggered one.
+        required: true
+        type: string
+      body:
+        description: Pull request body.
+        required: false
+        type: string
+        default: ''
+      assignees:
+        description: Comma-separated logins to assign.
+        required: false
+        type: string
+        default: ''
+      setup-command:
+        description: Extra setup before the build — apt packages, Playwright browsers, a PHP boot.
+        required: false
+        type: string
+        default: ''
+      setup-php:
+        description: Install PHP and Composer before the build.
+        required: false
+        type: boolean
+        default: false
+      php-version:
+        description: PHP version when `setup-php` is set.
+        required: false
+        type: string
+        default: '8.4'
+      node-version:
+        description: Node version.
+        required: false
+        type: string
+        default: '24'
+      install:
+        description: Dependency install command.
+        required: false
+        type: string
+        default: pnpm install --frozen-lockfile
+      app-id:
+        description: >-
+          GitHub App the pull request is opened as. Derived would be better, but
+          the App differs per repo and nothing in a repository states which one.
+        required: true
+        type: string
+      runner:
+        description: Runner label for this body's job.
+        required: false
+        type: string
+        default: ubuntu-latest
+    secrets:
+      BWS_ACCESS_TOKEN:
+        description: Bitwarden Secrets Manager access token — opens the App PEM.
+        required: true
+
+concurrency:
+  group: ${{ github.workflow }}-open-regenerated-pr-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  regenerate:
+    name: Rebuild and open a PR on change
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ inputs.node-version }}
+          cache: pnpm
+
+      - name: Set up PHP
+        if: inputs.setup-php
+        uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # 2.37.2
+        with:
+          php-version: ${{ inputs.php-version }}
+          tools: composer:v2
+          coverage: none
+
+      - name: Install Composer dependencies
+        if: inputs.setup-php
+        run: composer install --no-interaction --prefer-dist --optimize-autoloader
+
+      - name: Install dependencies
+        env:
+          INSTALL_COMMAND: ${{ inputs.install }}
+        run: bash -c "$INSTALL_COMMAND"
+
+      - name: Prepare
+        if: inputs.setup-command != ''
+        env:
+          SETUP_COMMAND: ${{ inputs.setup-command }}
+        run: bash -c "$SETUP_COMMAND"
+
+      - name: Rebuild
+        env:
+          BUILD_COMMAND: ${{ inputs.build-command }}
+        run: bash -c "$BUILD_COMMAND"
+
+      # Scoped to the declared paths, so a generator that also touches a lockfile
+      # or a cache directory does not turn every run into a pull request.
+      - name: Check for changes
+        id: diff
+        if: inputs.changed-command == ''
+        env:
+          PATHS: ${{ inputs.paths }}
+        run: |
+          set -euo pipefail
+          mapfile -t files < <(printf '%s\n' "$PATHS" | sed '/^$/d')
+
+          if git diff --quiet -- "${files[@]}"; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "The generated files already match their sources."
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            git diff --stat -- "${files[@]}"
+          fi
+
+      - name: Check for changes (repo's own answer)
+        id: diff-custom
+        if: inputs.changed-command != ''
+        env:
+          CHANGED_COMMAND: ${{ inputs.changed-command }}
+        run: bash -c "$CHANGED_COMMAND"
+
+      # Only when there is a pull request to open — a repo whose artifact is
+      # current never touches Bitwarden at all.
+      #
+      # DERIVED, not configured: each owner authenticates against its own `-ci`
+      # mirror, so the vault id follows `github.repository_owner`, exactly as the
+      # queue and release bodies do it.
+      - name: Fetch App PEM from Bitwarden
+        if: steps.diff.outputs.changed == 'true' || steps.diff-custom.outputs.changed == 'true'
+        uses: bitwarden/sm-action@1238aae8fc64b212641190a9227c8a734ab1a793 # v3.0.1
+        with:
+          access_token: ${{ secrets.BWS_ACCESS_TOKEN }}
+          cloud_region: eu
+          secrets: |
+            ${{ github.repository_owner == 'kirchDev' && '3a3459f0-c986-4ff3-a36b-b4550012d41e' || '29f8317d-29f7-46af-834b-b4550012d477' }} > KIRCHDEV_RELEASE_APP_PEM
+
+      - name: Mint the App token
+        id: app-token
+        if: steps.diff.outputs.changed == 'true' || steps.diff-custom.outputs.changed == 'true'
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ inputs.app-id }}
+          private-key: ${{ env.KIRCHDEV_RELEASE_APP_PEM }}
+
+      # `sign-commits: true` is the whole reason this is not a `git push`: the
+      # action writes the commit through the API, and GitHub signs it server-side.
+      # Both protected branches reject an unsigned one, so a pushed commit would
+      # produce a pull request that can never be merged.
+      - name: Open or update the pull request
+        if: steps.diff.outputs.changed == 'true' || steps.diff-custom.outputs.changed == 'true'
+        uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
+        with:
+          token: ${{ steps.app-token.outputs.token }}
+          sign-commits: true
+          branch: ${{ inputs.branch }}
+          base: ${{ github.ref_name }}
+          add-paths: ${{ inputs.paths }}
+          commit-message: ${{ inputs.title }}
+          title: ${{ inputs.title }}
+          body: ${{ inputs.body }}
+          assignees: ${{ inputs.assignees }}
+
+      - name: Summary
+        if: always()
+        env:
+          CHANGED: ${{ steps.diff.outputs.changed || steps.diff-custom.outputs.changed }}
+          BRANCH: ${{ inputs.branch }}
+          TITLE: ${{ inputs.title }}
+        run: |
+          {
+            if [ "$CHANGED" = "true" ]; then
+              echo "## Regenerated"
+              echo ""
+              echo "The generated files drifted from their sources — a pull request is open on \`$BRANCH\`."
+              echo ""
+              echo "> $TITLE"
+            else
+              echo "## Up to date"
+              echo ""
+              echo "The generated files already match their sources."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
