@@ -1,0 +1,57 @@
+# yaml-language-server: $schema=https://json.schemastore.org/github-workflow.json
+
+name: Cleanup Sync Branch (reusable)
+
+# Deletes the branch a bot re-points at `main` on every run. Because it is
+# re-pointed rather than re-cut, merging its pull request never deletes it —
+# GitHub's "delete branch on merge" only removes a branch the merge made
+# obsolete, and this one is immediately obsolete again. Left alone it lingers
+# behind `main` until the next sync.
+#
+# TWO CALLERS, MEASURED: `kirchDev/meta` and `TitusKirch/TitusKirch` carried
+# this file byte-identical apart from a two-line comment. That is the estate's
+# threshold for a body — one instance is not a pattern, two of the same file is.
+on:
+  workflow_call:
+    inputs:
+      branch:
+        description: >-
+          The bot branch to delete once its pull request has merged. Named
+          rather than derived: the workflow has to know which branch is a bot's
+          before it looks, or it would delete whichever branch merged.
+        required: false
+        type: string
+        default: bot/sync-projects
+      runner:
+        description: Runner label for this body's job.
+        required: false
+        type: string
+        default: ubuntu-latest
+
+jobs:
+  delete-branch:
+    name: Delete the sync branch after merge
+    # Both halves matter: an unmerged close leaves the branch alone, and a
+    # different branch's pull request is none of this workflow's business.
+    if: >-
+      github.event.pull_request.merged == true
+      && github.event.pull_request.head.ref == inputs.branch
+    runs-on: ${{ inputs.runner }}
+    permissions:
+      contents: write
+    steps:
+      # Idempotent on purpose: this fires on every closed pull request, and a
+      # branch already gone is the expected state rather than an error.
+      - name: Delete the head branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          BRANCH: ${{ inputs.branch }}
+        run: |
+          set -euo pipefail
+          if gh api "repos/$GH_REPO/git/refs/heads/$BRANCH" > /dev/null 2>&1; then
+            gh api -X DELETE "repos/$GH_REPO/git/refs/heads/$BRANCH"
+            echo "::notice::Deleted $BRANCH."
+          else
+            echo "$BRANCH already gone — nothing to do."
+          fi
