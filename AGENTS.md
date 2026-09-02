@@ -223,6 +223,21 @@ All of it is built: `_verified.yml` / `_record-verified.yml` (the tree-hash mark
 
 The Lighthouse body generalises `app`'s chain at exactly the two points that were repo-local — how the shard list is produced (`targets` or `targets-command`) and how the app is built. What is NOT generalised is the sharding itself: one runner per page, because two Chrome instances on one worker contend for CPU and that contention lands in the numbers being measured. The isolation is the method, so it stays fixed rather than becoming an input.
 
+## Required checks are `<caller-job> / Gate`, and nothing else
+
+Every CI body ends in a job called **`Gate`** — `needs:` every other job it runs, `if: always()`, failing when any of them failed or was cancelled. A branch-protection rule names that one check per caller job and never any other.
+
+**The reason is that no other job here has a name worth naming.** `Test (Node 24)`, `Pest (PHP 8.4, Laravel 13.*, highest)`, `Rust (ubuntu-latest)`, `Analyze (go)` — each carries a matrix value, so a rule pointing at one waits forever the day that value moves, and it fails on the *next* pull request rather than the one that changed it. Measured before this was built: `forgemap` required `Node / Typecheck (Node 24)`, one Node bump away from a permanent block, and `laravel-pbac` had already worked around the problem by hand, requiring only the single stably-named `Pest (PostgreSQL)` job and none of the matrix.
+
+`Gate`'s name is a property of the **caller's** job name — which the calling repo already chose — so adding, renaming or dropping a job in a body never touches a branch-protection rule again. Same rule as everywhere else here: what a caller would otherwise maintain by hand is a copy, and copies drift.
+
+**`skipped` passes; `cancelled` and `failure` do not.** A body skips what the repo has no script for and skips everything on a draft pull request. A draft cannot be merged, and a check a repo never runs is not a check it failed. This is also what retires the open question of whether a skipped job satisfies a required check: `Gate` itself is never skipped, so nothing depends on the answer.
+
+> [!IMPORTANT]
+> **A caller that wants a required check may not carry `paths-ignore`.** A workflow that does not trigger reports no check at all, and a required check that never reports does not fail the merge — it blocks it forever. Three repos carried exactly that combination unnoticed (`laravel-pbac`, `forgemap`, `envprism`): a README-only pull request into `main` would have deadlocked. The stub therefore runs on every pull request, and a docs-only one costs about a minute. If that minute ever matters, the skip belongs **inside the body**, where the gate still reports — never on the trigger.
+
+Bodies with a `Gate`: `_ci-check.yml`, `_ci-node.yml`, `_ci-laravel.yml`, `_ci-go.yml`, `_ci-rust.yml`, `_ci-tofu.yml`, `_ci-e2e.yml`, `_ci-lighthouse.yml`, `_coverage.yml`, `_codeql.yml`. The queue and release bodies have none — they are not pull-request gates.
+
 ## Breaking changes a migration carries
 
 Each of these lands once, per repo, at the moment its stub replaces its copy. None is a surprise to be discovered later — they are listed here so a migration PR can carry the fix in the same change.
@@ -230,6 +245,7 @@ Each of these lands once, per repo, at the moment its stub replaces its copy. No
 | Repo | What breaks | What to do in the same PR |
 | :--- | :--- | :--- |
 | every repo | Check names become `<caller-job> / <body-job>` | Update the branch-protection rule; a rule on the old name waits forever |
+| every repo with a rule | The required check becomes `<caller-job> / Gate`, and `paths-ignore` has to leave `ci.yml` | Set the rule to the `Gate` names only — never a matrix-named job — and drop the trigger filter |
 | `app` | Its single `quality-report` comment is replaced by two sticky threads — `coverage-report` and `lighthouse` | Drop the combined job; nothing else consumes it |
 | `app` | `_ci-lighthouse.yml` reports one job per shard plus a `summary`, where the copy had `audit-targets` / `audit` / `audit-summary` | Same branch-protection edit as above |
 | `glimpse` | `_ci-rust.yml` renames `deny` and `build`, and runs `fmt`/`clippy`/`test` inside one job per platform | Accepted deliberately — the alternative was never centralising Rust. The Tauri link stays a repo-local `tauri` job on `needs: rust`: it builds the Nuxt frontend into the binary, which no other repo does |
@@ -252,9 +268,9 @@ A reusable workflow is taken whole: a caller cannot replace one step or insert a
 
 Carried over from the build brief; none of these is settled.
 
-- **Does `skipped` satisfy a required check?** The tree-hash marker design leans on it. Verify deliberately before it becomes estate-wide policy.
+- ~~**Does `skipped` satisfy a required check?**~~ **Retired rather than answered.** The `Gate` job runs under `if: always()`, so it is never skipped and always reports; a required check now names it and nothing else. The tree-hash markers still lean on the old behaviour for the caller's *own* jobs — that part remains worth verifying before `_verified.yml` becomes estate-wide policy.
 - **Concurrency group scope.** `group: fast-forward-queue` is unqualified. It should evaluate in the caller's scope; if it does not, two repos draining at once serialise against each other for nothing. Cheap to verify, expensive to discover.
-- **Job names are the branch-protection interface.** Centralising renames every check to `<caller-job> / <body-job>` exactly once. That migration is coordinated, not discovered.
+- **Job names are no longer the branch-protection interface — `Gate` is.** Centralising renamed every check to `<caller-job> / <body-job>` once; `Gate` is what stops that from ever having to happen again. A body's other job names are now free to change.
 - **release-please `node` vs `simple`.** See the release-please bullet above.
 
 ## When editing this repo

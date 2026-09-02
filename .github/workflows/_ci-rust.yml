@@ -142,3 +142,47 @@ jobs:
 
       - name: Tests
         run: cargo test --all-features
+
+  # THE ONE CHECK BRANCH PROTECTION NAMES. `Rust (ubuntu-latest)` carries
+  # the platform in its name, so a rule naming it waits forever the day the
+  # matrix moves — silently, and on the next pull request rather than the
+  # one that changed it.
+  #
+  # This job's name never changes, so the required check is `<caller-job> / Gate`
+  # — a name the CALLING repo already owns, since it chose the caller job's name.
+  # Adding, renaming or removing a job in this body therefore never touches a
+  # branch-protection rule again. Same rule as everywhere else here: what a
+  # caller would otherwise have to maintain by hand is a copy, and copies drift.
+  #
+  # `if: always()` is what makes it a check rather than a report. A skipped job
+  # reports nothing at all, and a required check that never reports does not fail
+  # the merge — it blocks it forever. This one always runs and always answers,
+  # which also settles the open question of whether `skipped` satisfies a
+  # required check: nothing here relies on the answer.
+  gate:
+    name: Gate
+    needs: [deny, build]
+    if: always()
+    runs-on: ubuntu-latest
+    permissions: {}
+    steps:
+      # `skipped` PASSES, deliberately. This body skips what the repo has no
+      # script for, and skips everything on a draft pull request — a draft
+      # cannot be merged, and a check a repo never runs is not a check it
+      # failed. `cancelled` and `failure` both fail, so a cancelled run cannot
+      # be mistaken for a green one.
+      - name: Every job must have succeeded or been skipped
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          set -euo pipefail
+          echo "Job results: $RESULTS"
+          for result in $RESULTS; do
+            case "$result" in
+              success | skipped) ;;
+              *)
+                echo "::error::A job in this reusable workflow ended as '$result'."
+                exit 1
+                ;;
+            esac
+          done
