@@ -69,7 +69,12 @@ on:
         type: string
         default: ''
       assignees:
-        description: Comma-separated logins to assign.
+        description: >-
+          Comma-separated logins to assign. A `changed-command` may override this
+          per run by writing an `assignee` output — `meta` leaves a sync PR
+          unassigned when only stars, push dates and release URLs moved, and
+          assigns a human when something beyond those did. That judgement is
+          about the data, so it belongs to the repo that knows the data.
         required: false
         type: string
         default: ''
@@ -156,11 +161,21 @@ jobs:
         if: inputs.setup-command != ''
         env:
           SETUP_COMMAND: ${{ inputs.setup-command }}
+          # A generator that regenerates from live data needs to ask for it —
+          # `TitusKirch/TitusKirch`'s README renderer queries the API once per
+          # project it lists. This is the CALLER's own automatic token, so it
+          # carries exactly the permissions that caller granted, and nothing more.
+          GITHUB_TOKEN: ${{ github.token }}
         run: bash -c "$SETUP_COMMAND"
 
       - name: Rebuild
         env:
           BUILD_COMMAND: ${{ inputs.build-command }}
+          # A generator that regenerates from live data needs to ask for it —
+          # `TitusKirch/TitusKirch`'s README renderer queries the API once per
+          # project it lists. This is the CALLER's own automatic token, so it
+          # carries exactly the permissions that caller granted, and nothing more.
+          GITHUB_TOKEN: ${{ github.token }}
         run: bash -c "$BUILD_COMMAND"
 
       # Scoped to the declared paths, so a generator that also touches a lockfile
@@ -187,6 +202,7 @@ jobs:
         if: inputs.changed-command != ''
         env:
           CHANGED_COMMAND: ${{ inputs.changed-command }}
+          GITHUB_TOKEN: ${{ github.token }}
         run: bash -c "$CHANGED_COMMAND"
 
       # Only when there is a pull request to open — a repo whose artifact is
@@ -228,7 +244,7 @@ jobs:
           commit-message: ${{ inputs.title }}
           title: ${{ inputs.title }}
           body: ${{ inputs.body }}
-          assignees: ${{ inputs.assignees }}
+          assignees: ${{ steps.diff-custom.outputs.assignee || inputs.assignees }}
 
       - name: Summary
         if: always()
