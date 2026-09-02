@@ -17,6 +17,24 @@ name: CI Laravel (reusable)
 on:
   workflow_call:
     inputs:
+      heavy-runner:
+        description: >-
+          Runner for the jobs that actually use the machine, where `runner`
+          sizes the light ones. Empty falls back to `runner`, so a caller that
+          does not care states nothing. `app` sizes its Lighthouse shards at
+          four vCPU and its planning job at two, which is what this exists for.
+        required: false
+        type: string
+        default: ''
+      runner:
+        description: >-
+          Runner label for this body's jobs. THE ONE THING A BODY CANNOT DERIVE:
+          nothing in a repository states which fleet it belongs to, and the three
+          repos that run on Blacksmith chose that deliberately rather than
+          inheriting it. Default keeps every other caller on GitHub-hosted.
+        required: false
+        type: string
+        default: ubuntu-latest
       php-versions:
         description: JSON array of PHP versions, e.g. '["8.4", "8.5"]'.
         required: true
@@ -76,7 +94,7 @@ concurrency:
 jobs:
   test:
     name: Pest (PHP ${{ matrix.php }}, Laravel ${{ matrix.laravel }}, ${{ matrix.dependencies }})
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.heavy-runner || inputs.runner }}
     timeout-minutes: 15
     permissions:
       contents: read
@@ -154,7 +172,7 @@ jobs:
 
   test-pgsql:
     name: Pest (PostgreSQL)
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.heavy-runner || inputs.runner }}
     timeout-minutes: 15
     permissions:
       contents: read
@@ -212,7 +230,7 @@ jobs:
 
   coverage:
     name: Coverage (PCOV)
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.heavy-runner || inputs.runner }}
     timeout-minutes: 15
     needs: test
     permissions:
@@ -265,7 +283,7 @@ jobs:
   static-analysis:
     name: Larastan
     if: inputs.static-analysis-script != ''
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.runner }}
     timeout-minutes: 10
     permissions:
       contents: read
@@ -301,7 +319,7 @@ jobs:
 
   lint:
     name: Pint
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.runner }}
     timeout-minutes: 5
     permissions:
       contents: read
@@ -342,7 +360,7 @@ jobs:
     name: Gate
     needs: [test, test-pgsql, coverage, static-analysis, lint]
     if: always()
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.runner }}
     permissions: {}
     steps:
       # `skipped` PASSES, deliberately. This body skips what the repo has no

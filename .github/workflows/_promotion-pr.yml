@@ -6,6 +6,16 @@ name: Promotion PR (reusable)
 
 on:
   workflow_call:
+    inputs:
+      runner:
+        description: >-
+          Runner label for this body's jobs. THE ONE THING A BODY CANNOT DERIVE:
+          nothing in a repository states which fleet it belongs to, and the three
+          repos that run on Blacksmith chose that deliberately rather than
+          inheriting it. Default keeps every other caller on GitHub-hosted.
+        required: false
+        type: string
+        default: ubuntu-latest
     outputs:
       target:
         description: Branch the promotion PR targets — `stage` or `main`.
@@ -25,7 +35,7 @@ permissions:
 jobs:
   open-pr:
     name: Open or update the draft PR
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.runner }}
     outputs:
       target: ${{ steps.topology.outputs.target }}
       pull-request-number: ${{ steps.pr.outputs.number }}

@@ -11,6 +11,15 @@ name: CI OpenTofu (reusable)
 on:
   workflow_call:
     inputs:
+      runner:
+        description: >-
+          Runner label for this body's jobs. THE ONE THING A BODY CANNOT DERIVE:
+          nothing in a repository states which fleet it belongs to, and the three
+          repos that run on Blacksmith chose that deliberately rather than
+          inheriting it. Default keeps every other caller on GitHub-hosted.
+        required: false
+        type: string
+        default: ubuntu-latest
       working-directory:
         description: Directory holding the Tofu configuration.
         required: false
@@ -21,6 +30,24 @@ on:
         required: false
         type: string
         default: latest
+      tflint:
+        description: >-
+          Run tflint over the configuration. An input rather than a fact read
+          from the repo, because the absence of a `.tflint.hcl` means "use the
+          defaults", not "do not lint".
+        required: false
+        type: boolean
+        default: true
+      trivy:
+        description: Run the trivy misconfiguration scan over the configuration.
+        required: false
+        type: boolean
+        default: true
+      trivy-severity:
+        description: Severities that fail the scan.
+        required: false
+        type: string
+        default: HIGH,CRITICAL
 
 # THE GROUP CARRIES THIS BODY'S NAME, and that is not decoration. In a called
 # workflow `github.workflow` is the CALLER's name, so two bodies invoked by the
@@ -33,7 +60,7 @@ concurrency:
 jobs:
   tofu:
     name: OpenTofu
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.runner }}
     timeout-minutes: 15
     permissions:
       contents: read
@@ -61,6 +88,39 @@ jobs:
       - name: Validate
         run: tofu validate
 
+      # tflint and trivy are the generic half of a Tofu gate — the part every
+      # configuration repo wants and the part the next one would otherwise
+      # copy. What stays with the repo is the half that touches reality: a plan
+      # against real state needs real credentials and a real backend, and the
+      # pull-request comment that renders it is 250 lines only one repo needs.
+      #
+      # THE PROVIDER REPOS NEVER REACH THIS BODY — they call `_ci-go.yml`, and
+      # their only `.tf` files sit under `examples/` as documentation snippets.
+      # Scanning those would report missing encryption on a toy example, which
+      # is noise rather than coverage.
+      - name: Set up tflint
+        if: inputs.tflint
+        uses: terraform-linters/setup-tflint@v6
+        with:
+          tflint_version: latest
+
+      - name: tflint
+        if: inputs.tflint
+        run: |
+          tflint --init
+          tflint --recursive --minimum-failure-severity=warning
+
+      # `scan-ref` is the configuration directory rather than the repo root, so
+      # a Dockerfile or a workflow elsewhere in the tree is not swept in here.
+      - name: trivy misconfiguration scan
+        if: inputs.trivy
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: config
+          scan-ref: ${{ inputs.working-directory }}
+          severity: ${{ inputs.trivy-severity }}
+          exit-code: '1'
+
   # THE ONE CHECK BRANCH PROTECTION NAMES. `OpenTofu` is stable today, and
   # this body runs exactly one job — but that is a fact about today, not a
   # contract. The moment a second job appears here, a rule naming the first
@@ -81,7 +141,7 @@ jobs:
     name: Gate
     needs: [tofu]
     if: always()
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.runner }}
     permissions: {}
     steps:
       # `skipped` PASSES, deliberately. This body skips what the repo has no

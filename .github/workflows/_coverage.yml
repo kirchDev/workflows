@@ -14,6 +14,15 @@ name: Coverage Report (reusable)
 on:
   workflow_call:
     inputs:
+      runner:
+        description: >-
+          Runner label for this body's jobs. THE ONE THING A BODY CANNOT DERIVE:
+          nothing in a repository states which fleet it belongs to, and the three
+          repos that run on Blacksmith chose that deliberately rather than
+          inheriting it. Default keeps every other caller on GitHub-hosted.
+        required: false
+        type: string
+        default: ubuntu-latest
       artifact:
         description: Name of the artifact holding the coverage report(s).
         required: false
@@ -34,7 +43,7 @@ on:
 jobs:
   report:
     name: Coverage
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.runner }}
     permissions:
       contents: read
       # The sticky comment and the check run.
@@ -77,7 +86,7 @@ jobs:
     name: Gate
     needs: [report]
     if: always()
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.runner }}
     permissions: {}
     steps:
       # `skipped` PASSES, deliberately. This body skips what the repo has no

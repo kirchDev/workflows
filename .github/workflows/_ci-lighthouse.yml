@@ -29,6 +29,24 @@ name: CI Lighthouse (reusable)
 on:
   workflow_call:
     inputs:
+      heavy-runner:
+        description: >-
+          Runner for the jobs that actually use the machine, where `runner`
+          sizes the light ones. Empty falls back to `runner`, so a caller that
+          does not care states nothing. `app` sizes its Lighthouse shards at
+          four vCPU and its planning job at two, which is what this exists for.
+        required: false
+        type: string
+        default: ''
+      runner:
+        description: >-
+          Runner label for this body's jobs. THE ONE THING A BODY CANNOT DERIVE:
+          nothing in a repository states which fleet it belongs to, and the three
+          repos that run on Blacksmith chose that deliberately rather than
+          inheriting it. Default keeps every other caller on GitHub-hosted.
+        required: false
+        type: string
+        default: ubuntu-latest
       targets:
         description: >-
           JSON array of pages to audit, one shard each. Mutually exclusive with
@@ -109,7 +127,7 @@ jobs:
   # shard job, not here.
   targets:
     name: Plan the Audit
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.runner }}
     permissions:
       contents: read
     outputs:
@@ -156,7 +174,7 @@ jobs:
   audit:
     name: Lighthouse Audit (${{ matrix.target }})
     needs: targets
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.heavy-runner || inputs.runner }}
     timeout-minutes: ${{ inputs.timeout-minutes }}
     permissions:
       contents: read
@@ -234,7 +252,7 @@ jobs:
     name: Merge the Audit Reports
     needs: audit
     if: always() && inputs.merge-command != '' && inputs.report-path != ''
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.runner }}
     permissions:
       contents: read
       # The sticky comment. Only requested when there is one to post.
@@ -305,7 +323,7 @@ jobs:
     name: Gate
     needs: [targets, audit, summary]
     if: always()
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.runner }}
     permissions: {}
     steps:
       # `skipped` PASSES, deliberately. This body skips what the repo has no

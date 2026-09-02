@@ -32,6 +32,15 @@ name: Fast-forward Queue (reusable)
 on:
   workflow_call:
     inputs:
+      runner:
+        description: >-
+          Runner label for this body's jobs. THE ONE THING A BODY CANNOT DERIVE:
+          nothing in a repository states which fleet it belongs to, and the three
+          repos that run on Blacksmith chose that deliberately rather than
+          inheriting it. Default keeps every other caller on GitHub-hosted.
+        required: false
+        type: string
+        default: ubuntu-latest
       pr:
         description: Queue PR number to land; empty considers every open queue PR.
         required: false
@@ -73,7 +82,7 @@ jobs:
   # what split 26 repos into two groups that differ in nothing else.
   resolve:
     name: Resolve the integration branch
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.runner }}
     permissions:
       contents: read
     outputs:
@@ -106,7 +115,7 @@ jobs:
     name: Open the queue PR
     needs: resolve
     if: github.event_name == 'push' && github.event.deleted == false
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.runner }}
     permissions:
       contents: read
       pull-requests: read
@@ -201,7 +210,7 @@ jobs:
     name: Pick the queue PR
     needs: resolve
     if: github.event_name != 'push'
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.runner }}
     permissions:
       contents: read
       pull-requests: read
@@ -357,7 +366,7 @@ jobs:
     name: Fast-forward the integration branch
     needs: [resolve, pick]
     if: needs.pick.outputs.pr != ''
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.runner }}
     # Everything here runs on the App token; the workflow token needs nothing.
     permissions: {}
     env:

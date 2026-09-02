@@ -17,6 +17,16 @@ name: Verified Tree (reusable)
 # which takes only heads and tags.
 on:
   workflow_call:
+    inputs:
+      runner:
+        description: >-
+          Runner label for this body's jobs. THE ONE THING A BODY CANNOT DERIVE:
+          nothing in a repository states which fleet it belongs to, and the three
+          repos that run on Blacksmith chose that deliberately rather than
+          inheriting it. Default keeps every other caller on GitHub-hosted.
+        required: false
+        type: string
+        default: ubuntu-latest
     outputs:
       skip:
         description: '"true" when this tree already passed — gate your jobs on it.'
@@ -28,7 +38,7 @@ on:
 jobs:
   verified:
     name: Look for a Verified Tree
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.runner }}
     permissions:
       contents: read
     outputs:
