@@ -69,7 +69,12 @@ on:
         type: string
         default: ''
       assignees:
-        description: Comma-separated logins to assign.
+        description: >-
+          Comma-separated logins to assign. A `changed-command` may override this
+          per run by writing an `assignee` output — `meta` leaves a sync PR
+          unassigned when only stars, push dates and release URLs moved, and
+          assigns a human when something beyond those did. That judgement is
+          about the data, so it belongs to the repo that knows the data.
         required: false
         type: string
         default: ''
@@ -239,7 +244,7 @@ jobs:
           commit-message: ${{ inputs.title }}
           title: ${{ inputs.title }}
           body: ${{ inputs.body }}
-          assignees: ${{ inputs.assignees }}
+          assignees: ${{ steps.diff-custom.outputs.assignee || inputs.assignees }}
 
       - name: Summary
         if: always()
