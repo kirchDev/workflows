@@ -178,6 +178,7 @@ A body has no trigger of its own, so this repo needs a stub like anybody else. I
 | `_publish-goreleaser.yml` |          3 |        3 | two action pins and a wrong comment                         | ✅ reusable |
 | `_ci-check.yml`          |          11 |        ~8 | pins, and a step list that duplicates `package.json`       | ✅ reusable |
 | `_cleanup-sync-branch.yml` |        2 |        1 | a two-line comment, and nothing else                        | ✅ reusable |
+| `_open-regenerated-pr.yml` |        4 |        3 | three implementations of one rule, plus one repo that gave up | ✅ reusable |
 | `_ci-node.yml` / `_ci-laravel.yml` / `_ci-go.yml` / `_ci-rust.yml` | 11 | 13 | genuinely stack-dependent — one body per family | ✅ reusable |
 | `ci.yml` (the three outliers) |     3 |        3 | `app`, `gildstone`, `infrastructure` compose from bodies    | ✅ composed |
 
