@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.2.0](https://github.com/kirchDev/workflows/compare/v0.1.3...v0.2.0) (2026-09-02)
+
+
+### ⚠ BREAKING CHANGES
+
+* **ci:** the required status check becomes <caller-job> / Gate. A rule naming a body job keeps waiting, and ci.yml may no longer carry paths-ignore — a workflow that does not trigger reports no check, and a required check that never reports blocks the merge rather than failing it.
+
+### Features
+
+* **ci:** end every CI body in a stable Gate job ([e268a5d](https://github.com/kirchDev/workflows/commit/e268a5db494880adb92446eadb578b39d3a20cc6))
+
 ## [0.1.3](https://github.com/kirchDev/workflows/compare/v0.1.2...v0.1.3) (2026-09-01)
 
 
