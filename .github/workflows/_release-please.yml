@@ -143,3 +143,37 @@ jobs:
               -f "ref=refs/tags/$alias" -f "sha=$SHA" > /dev/null
             echo "::notice::Created $alias at $TAG ($SHA)."
           fi
+
+      # THE REPO-WIDE "AUTO-DELETE HEAD BRANCHES" TOGGLE IS NOT AN OPTION HERE,
+      # and that is the whole reason this step exists. Under the estate's
+      # branching model `dev` is itself a pull request's head branch — the
+      # promotion PR's — so switching that toggle on would delete the
+      # integration branch the moment a promotion lands. Deleting only the
+      # `release-please--*` branches, and only after a release, is the narrow
+      # version of the same cleanup.
+      #
+      # Written to be harmless when there is nothing to do: the branches it
+      # deletes are already merged, and a failed delete is tolerated rather
+      # than failing a release that has otherwise shipped.
+      - name: Delete merged release-please branches
+        if: steps.release.outputs.release_created == 'true'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          branches=$(gh api "repos/$GH_REPO/branches" --paginate --jq '.[].name' \
+            | grep '^release-please--' || true)
+
+          if [ -z "$branches" ]; then
+            echo "No release-please branches to clean up."
+            exit 0
+          fi
+
+          for branch in $branches; do
+            if gh api -X DELETE "repos/$GH_REPO/git/refs/heads/$branch" > /dev/null 2>&1; then
+              echo "::notice::Deleted $branch."
+            else
+              echo "::warning::Could not delete $branch — leaving it."
+            fi
+          done
