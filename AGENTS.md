@@ -35,9 +35,10 @@ Implication when changing a body: it runs in **every** calling repo, not just th
 | `pnpm lint`         | `oxlint . --deny-warnings`                                 |
 | `pnpm format`       | `oxfmt --check .` (note: `format` is the check, not fix)   |
 | `pnpm typecheck`    | `tsc --noEmit` over the meta scripts                       |
-| `pnpm check`        | Runs `lint` + `lint:actions` + `format` + `typecheck` + `check:policy` — the CI gate |
+| `pnpm check`        | Runs `lint` + `lint:actions` + `format` + `typecheck` + `check:policy` + `check:inputs` — the CI gate |
 | `pnpm lint:actions` | `actionlint` over every workflow, via Docker                |
 | `pnpm check:policy` | Proves the two agent policy files ban the same commands    |
+| `pnpm check:inputs` | Proves every `with:` key a stub passes exists on the body it calls |
 | `pnpm lint:fix`     | Auto-fix lint                                              |
 | `pnpm format:fix`   | Auto-fix format                                            |
 | `pnpm check:fix`    | Auto-fix lint + format                                     |
@@ -48,6 +49,8 @@ Implication when changing a body: it runs in **every** calling repo, not just th
 There is no test suite — this is config-only. CI derives its checks from the `check` script, so adding one there is enough.
 
 **`lint:actions` needs Docker**, which is why it is the one check that cannot run without it. `actionlint` ships no npm package, and the workflows are this repo's product — leaving them unchecked while `tsc` guards four meta scripts would be the wrong way round. Three shellcheck rules are silenced via `SHELLCHECK_OPTS` and each is deliberate: `SC2016` (a `node -e` script in single quotes, which must not expand), `SC2086` (word splitting is the point in the task loop), `SC2129` (style, inherited from the originals).
+
+**An unknown caller input is the failure mode `pnpm check:inputs` exists for.** GitHub rejects it at workflow **startup**: the run ends as `startup_failure` before any job begins, and the only message is "this run likely failed because of a workflow file issue" — never the input's name. actionlint does not catch it either, because it follows a `uses:` pointing at another repository no further than the string. So the class is invisible to every linter, fatal at runtime, and silent about its own cause — which is exactly what this repo turns into a gate task. Found the expensive way by `app`, which passed `_ci-lighthouse.yml` a `report-artifact` input that body has never defined. The check reads this repo's own stubs, which call their bodies by local path; a caller elsewhere pins a SHA and may legitimately be a version behind, so checking it from here would report a difference rather than a defect.
 
 ## Architecture / conventions
 
