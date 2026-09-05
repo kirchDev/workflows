@@ -57,7 +57,7 @@ jobs:
       # The reports come from whichever job produced them — this body never
       # runs a test suite itself, so it stays free of every stack it serves.
       - name: Download the coverage reports
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           name: ${{ inputs.artifact }}
 
