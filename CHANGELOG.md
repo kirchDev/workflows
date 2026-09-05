@@ -1,5 +1,28 @@
 # Changelog
 
+## [0.8.0](https://github.com/kirchDev/workflows/compare/v0.7.0...v0.8.0) (2026-09-05)
+
+
+### ⚠ BREAKING CHANGES
+
+* move to pnpm 12
+* this repository now requires pnpm 12.
+
+### Bug Fixes
+
+* **promotion-pr:** treat nothing to promote as success ([#30](https://github.com/kirchDev/workflows/issues/30)) ([3c77eb0](https://github.com/kirchDev/workflows/commit/3c77eb0e1bb8fca2fe657466f3ba84541728775e))
+
+
+### Reverts
+
+* go back to pnpm 11.25.0 ([014f31d](https://github.com/kirchDev/workflows/commit/014f31da66fc29c78488dd2ff62a876d92c8fb78))
+
+
+### Miscellaneous Chores
+
+* move to pnpm 12 ([e3664bc](https://github.com/kirchDev/workflows/commit/e3664bc98e76698fc42747b6f939580e5f4648b1))
+* pilot pnpm 12 and align the toolchain ([1be842c](https://github.com/kirchDev/workflows/commit/1be842cf1880151a12f2a47cf0fa0b1e275f079a))
+
 ## [0.7.0](https://github.com/kirchDev/workflows/compare/v0.6.0...v0.7.0) (2026-09-02)
 
 
