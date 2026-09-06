@@ -57,11 +57,11 @@ jobs:
       # The reports come from whichever job produced them — this body never
       # runs a test suite itself, so it stays free of every stack it serves.
       - name: Download the coverage reports
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           name: ${{ inputs.artifact }}
 
-      - uses: kirchDev/coverage-report@v0.1.0
+      - uses: kirchDev/coverage-report@f2e83d922e6406b97437c2f90c68eae941656f22 # v0.3.0
         with:
           reports: ${{ inputs.reports }}
           min-patch: ${{ inputs.min-patch }}
