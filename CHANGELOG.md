@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.8.1](https://github.com/kirchDev/workflows/compare/v0.8.0...v0.8.1) (2026-09-06)
+
+
+### Bug Fixes
+
+* give the release-please and promotion-pr bodies their own concurrency group ([#34](https://github.com/kirchDev/workflows/issues/34)) ([a375f91](https://github.com/kirchDev/workflows/commit/a375f91afe6aff5742432eaee4259d2dafba602c))
+
 ## [0.8.0](https://github.com/kirchDev/workflows/compare/v0.7.0...v0.8.0) (2026-09-05)
 
 
