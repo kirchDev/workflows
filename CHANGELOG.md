@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.8.2](https://github.com/kirchDev/workflows/compare/v0.8.1...v0.8.2) (2026-09-06)
+
+
+### Bug Fixes
+
+* **workflows:** pin every third-party action to a commit SHA ([#38](https://github.com/kirchDev/workflows/issues/38)) ([32512f8](https://github.com/kirchDev/workflows/commit/32512f806c34b5ae4feb3375ae13eeebd6276b72))
+
 ## [0.8.1](https://github.com/kirchDev/workflows/compare/v0.8.0...v0.8.1) (2026-09-06)
 
 
