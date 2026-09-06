@@ -51,8 +51,16 @@ on:
         description: Tag of the release that was cut, if any.
         value: ${{ jobs.release-please.outputs.tag-name }}
 
+# The discriminator is NOT decoration. Inside a called workflow
+# `github.workflow` resolves to the CALLER's workflow name, so a bare
+# `${{ github.workflow }}-${{ github.ref }}` here is the same string a caller
+# stub declaring that group produces — and GitHub cancels the job with
+# "a deadlock was detected for concurrency group". The cancelled job then never
+# appears in the run at all: the visible jobs are green, the run is red, and no
+# release PR is ever opened. Every other body in this directory already carries
+# one; these two did not.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-release-please-${{ github.ref }}
   cancel-in-progress: false
 
 permissions:
