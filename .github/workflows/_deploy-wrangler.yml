@@ -1,0 +1,186 @@
+# yaml-language-server: $schema=https://json.schemastore.org/github-workflow.json
+
+name: Deploy Wrangler (reusable)
+
+# The Cloudflare Workers deployment procedure, written once. `linear-github-sync`
+# calls it from `release-please.yml`, gated on that body's `release-created`
+# output or on a manual dispatch.
+#
+# Written from the one copy that exists rather than reconciled from several, so
+# the generalisation is named rather than guessed. Three things were repo-local
+# and became inputs; everything else is the same shape for any Worker repo:
+#
+#   * WHICH secrets to fetch — `bitwarden-secrets` carries the caller's own
+#     `<id> > NAME` lines. Bitwarden ids are vault IDENTIFIERS, not secrets (only
+#     BWS_ACCESS_TOKEN opens them), so they belong in a caller's `with:` rather
+#     than its `secrets:`. That also keeps them reviewable in the caller's diff,
+#     which is where a wrong id is actually caught.
+#   * WHICH script deploys — `deploy-script`, because a repo may ship more than
+#     one Worker and the ORDER between them is its own business, not this body's.
+#   * WHICH runtime secrets to push onto the Worker afterwards —
+#     `runtime-secrets`, a list of env var names that `bitwarden-secrets` has
+#     already exported. Empty skips the step entirely.
+#
+# NOT an input: a deployment URL. `environment.url` rejects an empty string, and
+# a Worker's public hostname is owned by tofu rather than by the repo (ADR-0019),
+# so there is nothing correct to default it to. The environment name alone is
+# what this body needs.
+on:
+  workflow_call:
+    inputs:
+      runner:
+        description: >-
+          Runner label for this body's jobs. THE ONE THING A BODY CANNOT DERIVE:
+          nothing in a repository states which fleet it belongs to, and the three
+          repos that run on Blacksmith chose that deliberately rather than
+          inheriting it. Default keeps every other caller on GitHub-hosted.
+        required: false
+        type: string
+        default: ubuntu-latest
+      environment:
+        description: GitHub deployment environment to target, e.g. production
+        required: true
+        type: string
+      bitwarden-secrets:
+        description: >-
+          Bitwarden Secrets Manager mapping, one `<secret-id> > ENV_NAME` per
+          line, exactly as `bitwarden/sm-action` takes it. Must include whatever
+          the deploy script authenticates with — wrangler reads
+          CLOUDFLARE_API_TOKEN out of the environment — plus every name listed in
+          `runtime-secrets`.
+        required: true
+        type: string
+      deploy-script:
+        description: >-
+          The pnpm script that deploys. `pnpm run <name>`, never `pnpm <name>` —
+          `deploy` is a pnpm built-in and would run that instead.
+        required: false
+        type: string
+        default: deploy
+      runtime-secrets:
+        description: >-
+          Names of the env vars to push onto the Worker as runtime secrets, one
+          per line. Sent in ONE `wrangler secret bulk` call, which is a PARTIAL
+          update: a key the Worker holds and this list omits is left untouched
+          rather than deleted. Empty (the default) skips the step.
+        required: false
+        type: string
+        default: ''
+      wrangler-config:
+        description: >-
+          Config file the secret sync targets. `secret bulk` writes to ONE
+          Worker, and a repo deploying several has to say which. Empty uses
+          wrangler's default config.
+        required: false
+        type: string
+        default: ''
+      wrangler-env:
+        description: >-
+          wrangler environment the secret sync targets, for a Worker that uses
+          them (`wrangler deploy --env production`). WITHOUT IT THE SYNC SILENTLY
+          MISSES: `secret bulk` writes to the top-level environment while the
+          deploy went to a named one, so the Worker runs with whatever secrets it
+          had before and nothing reports a failure. Empty — the default, and what
+          the only caller today needs — writes to the top level, which is where
+          that Worker actually is.
+        required: false
+        type: string
+        default: ''
+      release-tag:
+        description: Release tag being deployed, from release-please's `tag-name` output. Empty for a manual dispatch.
+        required: false
+        type: string
+        default: ''
+      node-version:
+        description: Node version to deploy under.
+        required: false
+        type: string
+        default: '24'
+    secrets:
+      BWS_ACCESS_TOKEN:
+        description: Bitwarden Secrets Manager access token — opens every id in `bitwarden-secrets`.
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    name: Deploy Worker
+    runs-on: ${{ inputs.runner }}
+    environment:
+      name: ${{ inputs.environment }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ inputs.node-version }}
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # sm-action exports each entry as an env var for the steps that follow, so
+      # neither the deploy nor the secret sync below ever puts a value on a
+      # command line.
+      - name: Fetch secrets from Bitwarden
+        uses: bitwarden/sm-action@1238aae8fc64b212641190a9227c8a734ab1a793 # v3.0.1
+        with:
+          access_token: ${{ secrets.BWS_ACCESS_TOKEN }}
+          cloud_region: eu
+          secrets: ${{ inputs.bitwarden-secrets }}
+
+      - name: Deploy
+        env:
+          DEPLOY_SCRIPT: ${{ inputs.deploy-script }}
+        run: pnpm run "$DEPLOY_SCRIPT"
+
+      # Values are read out of the environment by name, never interpolated into
+      # the command — which is also why the input is a list of NAMES and not of
+      # values. A name sm-action did not export is dropped rather than written as
+      # null, so a half-configured caller cannot blank a live Worker secret.
+      - name: Sync runtime secrets to the Worker
+        if: inputs.runtime-secrets != ''
+        env:
+          RUNTIME_SECRETS: ${{ inputs.runtime-secrets }}
+          WRANGLER_CONFIG: ${{ inputs.wrangler-config }}
+          WRANGLER_ENV: ${{ inputs.wrangler-env }}
+        run: |
+          set -euo pipefail
+
+          # Both flags target the sync only. The deploy above runs the caller's
+          # own script, which already carries whatever config and environment it
+          # deploys to.
+          set --
+          if [ -n "$WRANGLER_CONFIG" ]; then
+            set -- "$@" --config "$WRANGLER_CONFIG"
+          fi
+          if [ -n "$WRANGLER_ENV" ]; then
+            set -- "$@" --env "$WRANGLER_ENV"
+          fi
+
+          jq -n --arg names "$RUNTIME_SECRETS" '
+            $names
+            | split("\n")
+            | map(gsub("^\\s+|\\s+$"; ""))
+            | map(select(length > 0))
+            | map(select(env[.] != null))
+            | map({key: ., value: env[.]})
+            | from_entries
+          ' | pnpm wrangler secret bulk "$@"
+
+      - name: Deployment Summary
+        if: success()
+        env:
+          RELEASE_TAG: ${{ inputs.release-tag }}
+          COMMIT: ${{ github.sha }}
+        run: |
+          echo "## 🚀 Worker Deployment" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Property | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|----------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Release | ${RELEASE_TAG:-(manual dispatch)} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Commit | \`$COMMIT\` |" >> $GITHUB_STEP_SUMMARY
