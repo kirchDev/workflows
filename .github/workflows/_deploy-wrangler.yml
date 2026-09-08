@@ -74,6 +74,18 @@ on:
         required: false
         type: string
         default: ''
+      wrangler-env:
+        description: >-
+          wrangler environment the secret sync targets, for a Worker that uses
+          them (`wrangler deploy --env production`). WITHOUT IT THE SYNC SILENTLY
+          MISSES: `secret bulk` writes to the top-level environment while the
+          deploy went to a named one, so the Worker runs with whatever secrets it
+          had before and nothing reports a failure. Empty — the default, and what
+          the only caller today needs — writes to the top level, which is where
+          that Worker actually is.
+        required: false
+        type: string
+        default: ''
       release-tag:
         description: Release tag being deployed, from release-please's `tag-name` output. Empty for a manual dispatch.
         required: false
@@ -135,13 +147,19 @@ jobs:
         env:
           RUNTIME_SECRETS: ${{ inputs.runtime-secrets }}
           WRANGLER_CONFIG: ${{ inputs.wrangler-config }}
+          WRANGLER_ENV: ${{ inputs.wrangler-env }}
         run: |
           set -euo pipefail
 
+          # Both flags target the sync only. The deploy above runs the caller's
+          # own script, which already carries whatever config and environment it
+          # deploys to.
+          set --
           if [ -n "$WRANGLER_CONFIG" ]; then
-            set -- --config "$WRANGLER_CONFIG"
-          else
-            set --
+            set -- "$@" --config "$WRANGLER_CONFIG"
+          fi
+          if [ -n "$WRANGLER_ENV" ]; then
+            set -- "$@" --env "$WRANGLER_ENV"
           fi
 
           jq -n --arg names "$RUNTIME_SECRETS" '

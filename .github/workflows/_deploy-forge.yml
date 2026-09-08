@@ -69,12 +69,16 @@ on:
       # which would take away the readable "missing secrets" error the
       # validation job below produces.
       forge_api_token:
+        description: Forge API token the CLI authenticates with. Mapped by the caller from its own `<PREFIX>_FORGE_API_TOKEN`.
         required: false
       forge_server_name:
+        description: Forge server the site lives on. Mapped from `<PREFIX>_FORGE_SERVER_NAME`.
         required: false
       forge_site_name:
+        description: Forge site to deploy. Mapped from `<PREFIX>_FORGE_SITE_NAME`.
         required: false
       forge_organization:
+        description: Forge organization the server belongs to. Mapped from `<PREFIX>_FORGE_ORGANIZATION`.
         required: false
 
 permissions:
