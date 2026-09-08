@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.9.0](https://github.com/kirchDev/workflows/compare/v0.8.2...v0.9.0) (2026-09-08)
+
+
+### Features
+
+* **deploy:** add central bodies for Forge and Wrangler deployments ([#41](https://github.com/kirchDev/workflows/issues/41)) ([0c4dc41](https://github.com/kirchDev/workflows/commit/0c4dc41d9c52f0af9bdc2ff209a6e7d4b4986ac3))
+
 ## [0.8.2](https://github.com/kirchDev/workflows/compare/v0.8.1...v0.8.2) (2026-09-06)
 
 
