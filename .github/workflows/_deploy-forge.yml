@@ -1,0 +1,207 @@
+# yaml-language-server: $schema=https://json.schemastore.org/github-workflow.json
+
+name: Deploy Forge (reusable)
+
+# The Laravel Forge deployment procedure, written once. `kirchDev/app` calls it
+# three times (`ci.yml` for dev and stage, `release-please.yml` for production)
+# and `discord-presence-bot` a fourth time from its own `release-please.yml`.
+#
+# NOT A NEW BODY — a lift. `app` already carried this as a repo-local
+# `workflow_call` workflow; it moves here unchanged apart from three things:
+# `runs-on` became the estate's `runner` input, the PHP version became an input
+# because the two callers disagree on it, and the input NAMES were rehyphenated
+# to match the other twenty bodies (`environment_url` -> `environment-url`). The
+# SECRET names keep their underscores: GitHub's secret identifiers may not
+# contain a hyphen, so `forge_api_token` is not a style choice.
+#
+# Secrets cannot be resolved by name inside a reusable workflow — there is no way
+# to build `secrets.DEV_FORGE_API_TOKEN` from an input — so every call site maps
+# its own prefixed secrets onto the four generic names declared here. A call site
+# that forgets one deploys with an empty value, which is exactly what the
+# validation job below is here to catch. `discord-presence-bot` losing that job
+# is how a silent release-without-a-deploy became possible at all (INF-83).
+on:
+  workflow_call:
+    inputs:
+      runner:
+        description: >-
+          Runner label for this body's jobs. THE ONE THING A BODY CANNOT DERIVE:
+          nothing in a repository states which fleet it belongs to, and the three
+          repos that run on Blacksmith chose that deliberately rather than
+          inheriting it. Default keeps every other caller on GitHub-hosted.
+        required: false
+        type: string
+        default: ubuntu-latest
+      environment:
+        description: GitHub deployment environment to target, e.g. development
+        required: true
+        type: string
+      environment-url:
+        description: Public URL of that environment, shown on the deployment
+        required: true
+        type: string
+      environment-label:
+        description: Human-readable environment name used in the log and the summary table
+        required: true
+        type: string
+      secret-prefix:
+        description: Prefix of the caller's Forge secrets (DEV, STAGE, PROD), used to name them in the validation error
+        required: true
+        type: string
+      release-tag:
+        description: Release tag being deployed; set by release deployments only, empty for branch deployments
+        required: false
+        type: string
+        default: ''
+      php-version:
+        description: >-
+          PHP the Forge CLI runs on. It provisions the CLI and nothing else — the
+          deployment itself happens on the Forge server, which brings its own
+          runtime — so this never has to match the application's PHP version.
+          An input because the two callers disagreed on it (8.5 and 8.4) and
+          neither had a reason to.
+        required: false
+        type: string
+        default: '8.5'
+    secrets:
+      # Declared optional on purpose. A secret marked `required` makes GitHub
+      # fail the whole run during workflow validation, before any job starts,
+      # which would take away the readable "missing secrets" error the
+      # validation job below produces.
+      forge_api_token:
+        description: Forge API token the CLI authenticates with. Mapped by the caller from its own `<PREFIX>_FORGE_API_TOKEN`.
+        required: false
+      forge_server_name:
+        description: Forge server the site lives on. Mapped from `<PREFIX>_FORGE_SERVER_NAME`.
+        required: false
+      forge_site_name:
+        description: Forge site to deploy. Mapped from `<PREFIX>_FORGE_SITE_NAME`.
+        required: false
+      forge_organization:
+        description: Forge organization the server belongs to. Mapped from `<PREFIX>_FORGE_ORGANIZATION`.
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  # A job of its own, deliberately not a first step of the deployment. A missing
+  # secret has to stop the deployment before it starts; folded into the deploy
+  # job it would instead abort it halfway through, after the checkout and the
+  # Forge CLI install, which is a worse thing to read in a failed run.
+  validate-secrets:
+    name: Validate Secrets
+    runs-on: ${{ inputs.runner }}
+    outputs:
+      valid: ${{ steps.check.outputs.valid }}
+    steps:
+      - name: Check Required Secrets
+        id: check
+        env:
+          SECRET_PREFIX: ${{ inputs.secret-prefix }}
+          FORGE_API_TOKEN: ${{ secrets.forge_api_token }}
+          # Not named FORGE_SERVER / FORGE_SITE / FORGE_ORGANIZATION: the Forge
+          # CLI reads FORGE_* out of the environment, and the deploy job below
+          # must take its server and site from the command line only.
+          DEPLOY_SERVER: ${{ secrets.forge_server_name }}
+          DEPLOY_SITE: ${{ secrets.forge_site_name }}
+          DEPLOY_ORGANIZATION: ${{ secrets.forge_organization }}
+        run: |
+          MISSING=""
+          if [ -z "$FORGE_API_TOKEN" ]; then
+            MISSING="$MISSING ${SECRET_PREFIX}_FORGE_API_TOKEN"
+          fi
+          if [ -z "$DEPLOY_SERVER" ]; then
+            MISSING="$MISSING ${SECRET_PREFIX}_FORGE_SERVER_NAME"
+          fi
+          if [ -z "$DEPLOY_SITE" ]; then
+            MISSING="$MISSING ${SECRET_PREFIX}_FORGE_SITE_NAME"
+          fi
+          if [ -z "$DEPLOY_ORGANIZATION" ]; then
+            MISSING="$MISSING ${SECRET_PREFIX}_FORGE_ORGANIZATION"
+          fi
+
+          if [ -n "$MISSING" ]; then
+            echo "::error::Missing required secrets:$MISSING"
+            echo "valid=false" >> $GITHUB_OUTPUT
+            exit 1
+          fi
+
+          echo "✅ All required secrets are configured"
+          echo "valid=true" >> $GITHUB_OUTPUT
+
+  deploy:
+    name: Deploy
+    runs-on: ${{ inputs.runner }}
+    needs: validate-secrets
+    if: needs.validate-secrets.outputs.valid == 'true'
+    environment:
+      name: ${{ inputs.environment }}
+      url: ${{ inputs.environment-url }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # 2.37.2
+        with:
+          php-version: ${{ inputs.php-version }}
+          tools: composer:v2
+          coverage: none
+
+      - name: Require Laravel Forge CLI
+        run: |
+          composer global require laravel/forge-cli
+          echo "$HOME/.composer/vendor/bin" >> $GITHUB_PATH
+
+      - name: Deploy to Forge
+        env:
+          FORGE_API_TOKEN: ${{ secrets.forge_api_token }}
+          DEPLOY_SERVER: ${{ secrets.forge_server_name }}
+          DEPLOY_SITE: ${{ secrets.forge_site_name }}
+          DEPLOY_ORGANIZATION: ${{ secrets.forge_organization }}
+          ENVIRONMENT_LABEL: ${{ inputs.environment-label }}
+          RELEASE_TAG: ${{ inputs.release-tag }}
+        run: |
+          echo "🚀 Deploying to $ENVIRONMENT_LABEL environment..."
+          if [ -n "$RELEASE_TAG" ]; then
+            echo "Release: $RELEASE_TAG"
+          fi
+          echo "Server: $DEPLOY_SERVER"
+          echo "Site: $DEPLOY_SITE"
+          echo ""
+          forge organization:switch "$DEPLOY_ORGANIZATION"
+          forge server:switch "$DEPLOY_SERVER"
+          forge deploy "$DEPLOY_SITE"
+          echo ""
+          echo "✅ Deployment initiated successfully"
+
+      # A release deployment identifies itself by its tag, a branch deployment by
+      # its branch — `release-tag` is what tells the two apart, and it decides
+      # both the heading and the second row.
+      - name: Deployment Summary
+        if: success()
+        env:
+          ENVIRONMENT_LABEL: ${{ inputs.environment-label }}
+          RELEASE_TAG: ${{ inputs.release-tag }}
+          BRANCH: ${{ github.ref_name }}
+          COMMIT: ${{ github.sha }}
+          ACTOR: ${{ github.actor }}
+        run: |
+          if [ -n "$RELEASE_TAG" ]; then
+            echo "## 🚀 $ENVIRONMENT_LABEL Deployment Summary" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "## 🚀 Deployment Summary" >> $GITHUB_STEP_SUMMARY
+          fi
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Property | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|----------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Environment | $ENVIRONMENT_LABEL |" >> $GITHUB_STEP_SUMMARY
+          if [ -n "$RELEASE_TAG" ]; then
+            echo "| Release | $RELEASE_TAG |" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "| Branch | $BRANCH |" >> $GITHUB_STEP_SUMMARY
+          fi
+          echo "| Commit | \`$COMMIT\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Actor | $ACTOR |" >> $GITHUB_STEP_SUMMARY
+          echo "| Time | $(date -u '+%Y-%m-%d %H:%M:%S UTC') |" >> $GITHUB_STEP_SUMMARY
