@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.10.0](https://github.com/kirchDev/workflows/compare/v0.9.0...v0.10.0) (2026-09-09)
+
+
+### Features
+
+* **ci-rust:** let a caller name the rust-cache key family ([c179b81](https://github.com/kirchDev/workflows/commit/c179b8183ff12de16acbb2f2237af993dfc7c4cb))
+* **ci-rust:** let a caller name the rust-cache key family ([#44](https://github.com/kirchDev/workflows/issues/44)) ([4383d6b](https://github.com/kirchDev/workflows/commit/4383d6b5b0e0aba9c561fc9b81a7131cff08d4c0))
+
 ## [0.9.0](https://github.com/kirchDev/workflows/compare/v0.8.2...v0.9.0) (2026-09-08)
 
 
