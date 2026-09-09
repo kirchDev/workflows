@@ -54,6 +54,21 @@ on:
         required: false
         type: string
         default: rustfmt, clippy
+      cache-shared-key:
+        description: >-
+          `shared-key` for `Swatinem/rust-cache`. Empty — the default — leaves
+          the action keying on `github.job`, which here is always `build`.
+          THAT DEFAULT IS A FOOTGUN FOR A CALLER THAT ALSO BUILDS RUST ELSEWHERE:
+          a repo whose own workflow has a job called `build` writes into the same
+          `<prefix>-build-<os>-…` family as this body, and the two overwrite each
+          other whenever they build different profiles — glimpse's release Tauri
+          builds and this body's dev-profile checks did exactly that, and every
+          run started from a cold cache. Naming the family explicitly separates
+          them, and lets a caller deliberately SHARE one across several of its
+          own jobs. Purely a cache key: nothing else about the build changes.
+        required: false
+        type: string
+        default: ''
       cargo-deny:
         description: >-
           Run the supply-chain gate. Left as an input rather than derived from a
@@ -140,6 +155,9 @@ jobs:
         uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
         with:
           workspaces: ${{ inputs.working-directory }}
+          # Empty is the action's own default, so a caller that passes nothing
+          # keeps the exact key it has today and no existing cache is orphaned.
+          shared-key: ${{ inputs.cache-shared-key }}
 
       - name: Format check
         run: cargo fmt --all --check
