@@ -85,6 +85,17 @@ on:
         required: false
         type: string
         default: pnpm install --frozen-lockfile
+      remote-source-cache-command:
+        description: >-
+          Command that decides whether, and under which key, the checks' remote
+          source downloads are cached. It runs after the install and must append
+          `cacheable`, `key` and a multi-line `paths` to `$GITHUB_OUTPUT` itself
+          (for duxt, `node ./bin/duxt-cache-key.mjs --github >> "$GITHUB_OUTPUT"`).
+          Empty, the default, is off: no step runs and nothing is cached. A set
+          command IS the opt-in, so there is no separate switch to keep in step.
+        required: false
+        type: string
+        default: ''
 
 # THE GROUP CARRIES THIS BODY'S NAME, and that is not decoration. In a called
 # workflow `github.workflow` is the CALLER's name, so two bodies invoked by the
@@ -129,6 +140,38 @@ jobs:
         env:
           INSTALL_COMMAND: ${{ inputs.install }}
         run: bash -c "$INSTALL_COMMAND"
+
+      # THE BODY KNOWS THE OUTPUT CONTRACT, NOT THE TOOL. Whether a download is
+      # safe to cache is the caller's command's call: an Actions cache written on
+      # a branch is readable by every pull request against it, so a command that
+      # sees a private or authenticated source answers `cacheable=false` and the
+      # cache step below skips. `false` is an answer, not a failure.
+      #
+      # AN INPUT AND NOT A JOB BESIDE THE CALL. A reusable workflow runs on its
+      # own runner with its own filesystem, so a restore in the caller's job can
+      # never reach the directory these checks read.
+      - name: Resolve the remote-source cache key
+        id: remote-sources
+        if: inputs.remote-source-cache-command != ''
+        env:
+          REMOTE_SOURCE_CACHE_COMMAND: ${{ inputs.remote-source-cache-command }}
+        run: bash -c "$REMOTE_SOURCE_CACHE_COMMAND"
+
+      # Restores here and saves in its post step, once the checks have filled the
+      # paths — and only on a green job, so a half-downloaded tree is never kept.
+      #
+      # EXACT KEY, NO `restore-keys`. A near miss would restore sources for a
+      # different ref and hand the checks content that is not what the repo
+      # declares. This gate runs on `pull_request` alone, so what it saves serves
+      # that pull request's re-runs; a hit across pull requests comes from the
+      # default branch's own writer, which has to run the identical command so
+      # key and path list match.
+      - name: Cache the remote sources
+        if: steps.remote-sources.outputs.cacheable == 'true'
+        uses: actions/cache@v6
+        with:
+          path: ${{ steps.remote-sources.outputs.paths }}
+          key: ${{ steps.remote-sources.outputs.key }}
 
       - name: Resolve the checks
         id: resolve
