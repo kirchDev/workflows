@@ -5,8 +5,6 @@ status: 'accepted'
 date: '2026-09-01'
 ---
 
-# ADR-0001 — Derive a body's configuration from the repo
-
 ## Context
 
 The bodies replace workflow files that had been copied into every repo and had drifted apart. Counting the copies made them look irreconcilable — the fast-forward queue workflow existed in eight versions — but the differences between them were not eight problems. They were the integration branch name, a per-owner secret identifier, a runner label, and a group of repos that had never received a fix.

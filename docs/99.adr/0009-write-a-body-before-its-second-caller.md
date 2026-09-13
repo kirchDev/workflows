@@ -5,8 +5,6 @@ status: 'accepted'
 date: '2026-09-01'
 ---
 
-# ADR-0009 — Write a body before its second caller
-
 ## Context
 
 The case for centralising a workflow is that several repos carry the same one. Where only a single repo has it, that case is absent: a body written for one caller generalises a shape nobody has met twice, and the input it takes may be the wrong seam.

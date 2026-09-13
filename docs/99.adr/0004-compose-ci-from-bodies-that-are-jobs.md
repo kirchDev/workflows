@@ -5,8 +5,6 @@ status: 'accepted'
 date: '2026-09-01'
 ---
 
-# ADR-0004 — Compose CI from bodies that are jobs
-
 ## Context
 
 CI was the workflow that had drifted furthest: measured across the estate, nearly every repo's copy was unique. Behind that were a handful of families — repos running a single gate, libraries running a typecheck-test-build set, packages running a version matrix against a database, providers running a language toolchain — and a few repos with pipelines that genuinely belong to them, carrying deploy stages and their own short-circuits.
