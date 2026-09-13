@@ -5,8 +5,6 @@ status: 'accepted'
 date: '2026-09-01'
 ---
 
-# ADR-0005 — Publish with one body per target
-
 ## Context
 
 The release workflow and the publish step arrived as one file in every repo that had them. Most repos that cut releases publish nothing at all — they exist to be depended on by their own tags, or they deploy instead. The ones that do publish split by target, and the targets need different credentials: a registry token for one, a signing key out of the vault for another.

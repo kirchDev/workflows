@@ -5,8 +5,6 @@ status: 'accepted'
 date: '2026-09-01'
 ---
 
-# ADR-0008 — Give each reporter its own comment thread
-
 ## Context
 
 Two of the bodies write results back to a pull request: coverage, and the performance audit. The repository they were derived from had collected both into a single comment, and said why — a second reporting job beside it would open a second thread, and a pull request carrying a thread per metric is one nobody reads.

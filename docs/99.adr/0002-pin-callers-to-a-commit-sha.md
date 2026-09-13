@@ -5,8 +5,6 @@ status: 'accepted'
 date: '2026-09-01'
 ---
 
-# ADR-0002 — Pin callers to a commit SHA
-
 ## Context
 
 A caller has to name a ref. A moving major tag is the conventional choice and the one the marketplace actions themselves offer, and this repository can move such a tag: release-please cuts exact tags, and the release workflow can force-push `v<major>` onto each one.

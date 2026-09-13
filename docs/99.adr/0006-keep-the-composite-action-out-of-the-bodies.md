@@ -5,8 +5,6 @@ status: 'accepted'
 date: '2026-09-01'
 ---
 
-# ADR-0006 — Keep the composite action out of the bodies
-
 ## Context
 
 A reusable workflow is taken whole. A caller cannot replace one of its steps or insert another, so a repo needing "that body plus one thing" has to write its own job — which is why the setup those bodies open with also exists as a composite action it can call.

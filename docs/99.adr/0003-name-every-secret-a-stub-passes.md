@@ -5,8 +5,6 @@ status: 'accepted'
 date: '2026-09-01'
 ---
 
-# ADR-0003 — Name every secret a stub passes
-
 ## Context
 
 A caller can hand a reusable workflow everything it holds in one word. That word is shorter than a block naming each secret, and it never needs touching again when a body grows a new requirement.

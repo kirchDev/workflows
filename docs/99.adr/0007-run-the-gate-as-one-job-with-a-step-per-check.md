@@ -5,8 +5,6 @@ status: 'accepted'
 date: '2026-09-01'
 ---
 
-# ADR-0007 — Run the gate as one job with a step per check
-
 ## Context
 
 For the repos whose CI is a set of independent checks, the copied workflows listed those checks a second time as steps — the same commands the package manifest's gate script already chained, kept in step by hand.

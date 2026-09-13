@@ -262,6 +262,15 @@ A repo whose gate lives under another name passes it:
       gate-script: verify
 ```
 
+A repo whose checks download remote sources — a Nuxt Content site reading `repo` sources — can cache them across runs by naming the command that works out the key:
+
+```yaml
+    with:
+      remote-source-cache-command: node ./bin/duxt-cache-key.mjs --github >> "$GITHUB_OUTPUT"
+```
+
+The command appends `cacheable`, `key` and a multi-line `paths` to `$GITHUB_OUTPUT`; the body restores and saves those paths with `actions/cache` under that exact key, and skips both unless `cacheable` is `true`. Left empty, which is the default, nothing runs. The gate runs on pull requests only, so a hit across pull requests comes from the default branch's own writer running the identical command.
+
 ### Adding a check needs no workflow change
 
 Because the job list comes from the gate script, a repo adds a check by editing `package.json` alone. The `.gitignore` drift check is the worked example:
