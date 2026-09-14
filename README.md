@@ -271,6 +271,15 @@ A repo whose checks download remote sources — a Nuxt Content site reading `rep
 
 The command appends `cacheable`, `key` and a multi-line `paths` to `$GITHUB_OUTPUT`; the body restores and saves those paths with `actions/cache` under that exact key, and skips both unless `cacheable` is `true`. Left empty, which is the default, nothing runs. The gate runs on pull requests only, so a hit across pull requests comes from the default branch's own writer running the identical command.
 
+A repo whose gate also chains a Gradle build asks for a JDK, the same way a Laravel repo asks for PHP with `setup-php`:
+
+```yaml
+    with:
+      setup-java: true # java-version defaults to '25', java-distribution to temurin
+```
+
+The body installs it through `actions/setup-java` with `cache: gradle`, so a re-run of the same pull request restores the Gradle wrapper and dependencies instead of downloading them; toolchains are not cached, because Gradle finds the installed JDK and provisions nothing. `_ci-e2e.yml` and `_ci-lighthouse.yml` take the same three inputs. `cache: gradle` keys on the repo's Gradle build files, so the opt-in expects them to exist.
+
 ### Adding a check needs no workflow change
 
 Because the job list comes from the gate script, a repo adds a check by editing `package.json` alone. The `.gitignore` drift check is the worked example:

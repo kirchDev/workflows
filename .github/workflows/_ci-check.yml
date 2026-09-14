@@ -80,6 +80,26 @@ on:
         required: false
         type: string
         default: '8.4'
+      setup-java:
+        description: >-
+          Install a JDK before the checks run, with Gradle's wrapper and
+          dependency caches restored. For a repo whose gate chains a Gradle build
+          — the runner image's preinstalled JDK is neither pinned nor the one the
+          build's toolchain asks for. Same input as `_ci-e2e.yml` and
+          `_ci-lighthouse.yml` carry.
+        required: false
+        type: boolean
+        default: false
+      java-version:
+        description: Java version when `setup-java` is set.
+        required: false
+        type: string
+        default: '25'
+      java-distribution:
+        description: JDK distribution when `setup-java` is set, as `actions/setup-java` names it.
+        required: false
+        type: string
+        default: temurin
       install:
         description: Dependency install command.
         required: false
@@ -135,6 +155,23 @@ jobs:
       - name: Install Composer dependencies
         if: inputs.setup-php
         run: composer install --no-interaction --prefer-dist --optimize-autoloader
+
+      # `cache: gradle` RATHER THAN `gradle/actions/setup-gradle`: first-party, no
+      # extra SHA pin, and the same idiom as `cache: pnpm` above. It keys on the
+      # build files and the wrapper properties, restores the wrapper distribution
+      # and dependency caches here and saves them in its post step — so a re-run
+      # of the same pull request downloads neither. This gate runs on
+      # `pull_request` alone, so nothing here warms a DIFFERENT pull request.
+      #
+      # TOOLCHAINS ARE NOT CACHED, deliberately. With the JDK the toolchain asks
+      # for installed here, Gradle resolves it locally and provisions nothing.
+      - name: Set up Java
+        if: inputs.setup-java
+        uses: actions/setup-java@v6
+        with:
+          distribution: ${{ inputs.java-distribution }}
+          java-version: ${{ inputs.java-version }}
+          cache: gradle
 
       - name: Install dependencies
         env:
