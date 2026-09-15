@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.12.0](https://github.com/kirchDev/workflows/compare/v0.11.0...v0.12.0) (2026-09-14)
+
+
+### Features
+
+* **ci:** add a Java setup input to the check, E2E and Lighthouse bodies ([490c525](https://github.com/kirchDev/workflows/commit/490c5252789874bb537b6f2a63d2678cbf207136)), closes [#50](https://github.com/kirchDev/workflows/issues/50)
+
 ## [0.11.0](https://github.com/kirchDev/workflows/compare/v0.10.0...v0.11.0) (2026-09-13)
 
 
