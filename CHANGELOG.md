@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.12.1](https://github.com/kirchDev/workflows/compare/v0.12.0...v0.12.1) (2026-10-11)
+
+
+### Bug Fixes
+
+* **ci:** stop persisting checkout credentials ([90d5cdf](https://github.com/kirchDev/workflows/commit/90d5cdf436140200493692d1b03677d7ac393b9b))
+* pin the remaining actions and close the queue landing race ([#56](https://github.com/kirchDev/workflows/issues/56)) ([5fe981a](https://github.com/kirchDev/workflows/commit/5fe981a5547d0ee467f5cda6376828b4fb3dfe67))
+* **publish:** move onto the release tag after an unparameterised checkout ([522f374](https://github.com/kirchDev/workflows/commit/522f374c3b194516868e85eb5bf5408f33509409))
+* **publish:** restrict checkouts to trusted release sources ([b086b4f](https://github.com/kirchDev/workflows/commit/b086b4fa9c7b43c39f70e8e5e70b27be01f7b575))
+
 ## [0.12.0](https://github.com/kirchDev/workflows/compare/v0.11.0...v0.12.0) (2026-09-14)
 
 
