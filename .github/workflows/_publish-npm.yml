@@ -68,13 +68,22 @@ jobs:
       # OIDC identity.
       id-token: write
     steps:
-      # Qualify tags so an input cannot select a branch, PR ref or commit.
-      # Prereleases use the triggering commit, not a branch that can move.
-      - name: Validate the publish source
-        id: source
+      # NO `ref:` ON THE CHECKOUT, deliberately. It takes the triggering commit,
+      # which is exactly what a prerelease publishes, and a stable publish then
+      # moves onto its tag in the next step. Feeding any derived value into
+      # `ref:` is what CodeQL's `actions/untrusted-checkout` flags in a
+      # `workflow_call` body, validated or not -- it cannot see the validation.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # Qualify the tag so an input cannot select a branch, PR ref or commit,
+      # and refuse a prerelease from anything but a branch.
+      - name: Switch to the publish source
         env:
           TAG_NAME: ${{ inputs.tag-name }}
           PRERELEASE: ${{ inputs.prerelease }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           if [ "$PRERELEASE" = "true" ]; then
@@ -82,16 +91,14 @@ jobs:
               echo "::error::Prereleases require a branch push or dispatch."
               exit 1
             fi
-            printf 'checkout=%s\n' "$GITHUB_SHA" >> "$GITHUB_OUTPUT"
-          else
-            git check-ref-format "refs/tags/$TAG_NAME"
-            printf 'checkout=refs/tags/%s\n' "$TAG_NAME" >> "$GITHUB_OUTPUT"
+            exit 0
           fi
 
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ steps.source.outputs.checkout }}
-          persist-credentials: false
+          git check-ref-format "refs/tags/$TAG_NAME"
+          AUTH=$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)
+          git -c "http.$GITHUB_SERVER_URL/.extraheader=AUTHORIZATION: basic $AUTH" \
+            fetch --no-tags --depth=1 origin "+refs/tags/$TAG_NAME:refs/tags/$TAG_NAME"
+          git checkout --detach "refs/tags/$TAG_NAME"
 
       - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
 
