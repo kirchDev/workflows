@@ -46,7 +46,7 @@
     "@types/node": "^26.6.4",
     "husky": "^9.1.7",
     "lint-staged": "^17.6.0",
-    "oxfmt": "0.71.0",
+    "oxfmt": "0.72.0",
     "oxlint": "1.87.0",
     "taze": "^21.3.0",
     "typescript": "^7.0.2"
