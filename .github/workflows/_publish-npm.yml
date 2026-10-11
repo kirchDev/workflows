@@ -55,6 +55,8 @@ on:
 jobs:
   publish:
     name: ${{ inputs.prerelease && 'Publish prerelease' || 'Publish stable release' }}
+    # Publishing must never run in a pull-request or workflow_run context.
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch' || github.event_name == 'release'
     runs-on: ${{ inputs.runner }}
     permissions:
       contents: read
@@ -66,11 +68,30 @@ jobs:
       # OIDC identity.
       id-token: write
     steps:
-      # A stable publish takes the tag release-please just cut; a prerelease
-      # takes the branch it was triggered on.
+      # Qualify tags so an input cannot select a branch, PR ref or commit.
+      # Prereleases use the triggering commit, not a branch that can move.
+      - name: Validate the publish source
+        id: source
+        env:
+          TAG_NAME: ${{ inputs.tag-name }}
+          PRERELEASE: ${{ inputs.prerelease }}
+        run: |
+          set -euo pipefail
+          if [ "$PRERELEASE" = "true" ]; then
+            if [[ "$GITHUB_REF" != refs/heads/* ]]; then
+              echo "::error::Prereleases require a branch push or dispatch."
+              exit 1
+            fi
+            printf 'checkout=%s\n' "$GITHUB_SHA" >> "$GITHUB_OUTPUT"
+          else
+            git check-ref-format "refs/tags/$TAG_NAME"
+            printf 'checkout=refs/tags/%s\n' "$TAG_NAME" >> "$GITHUB_OUTPUT"
+          fi
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ inputs.prerelease && github.ref || inputs.tag-name }}
+          ref: ${{ steps.source.outputs.checkout }}
+          persist-credentials: false
 
       - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
 

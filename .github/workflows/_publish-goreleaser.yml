@@ -36,15 +36,28 @@ on:
 jobs:
   goreleaser:
     name: Build and sign provider artifacts
+    # Publishing must never run in a pull-request or workflow_run context.
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch' || github.event_name == 'release'
     runs-on: ${{ inputs.runner }}
     timeout-minutes: ${{ inputs.timeout-minutes }}
     permissions:
       # GoReleaser uploads the built artifacts onto the release it builds from.
       contents: write
     steps:
+      # A tag input must not be interpreted as a branch, PR ref or commit.
+      - name: Validate the publish source
+        id: source
+        env:
+          TAG_NAME: ${{ inputs.tag-name }}
+        run: |
+          set -euo pipefail
+          git check-ref-format "refs/tags/$TAG_NAME"
+          printf 'checkout=refs/tags/%s\n' "$TAG_NAME" >> "$GITHUB_OUTPUT"
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ inputs.tag-name }}
+          ref: ${{ steps.source.outputs.checkout }}
+          persist-credentials: false
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
