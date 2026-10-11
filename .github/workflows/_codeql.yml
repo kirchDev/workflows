@@ -62,6 +62,7 @@ jobs:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 1
+          persist-credentials: false
 
       # THE BUILD MODE IS PER LANGUAGE, not shared, and that is a CodeQL
       # constraint rather than a preference: Go rejects `none` outright ("Go does
