@@ -36,17 +36,36 @@ on:
 jobs:
   goreleaser:
     name: Build and sign provider artifacts
+    # Publishing must never run in a pull-request or workflow_run context.
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch' || github.event_name == 'release'
     runs-on: ${{ inputs.runner }}
     timeout-minutes: ${{ inputs.timeout-minutes }}
     permissions:
       # GoReleaser uploads the built artifacts onto the release it builds from.
       contents: write
     steps:
-      - uses: actions/checkout@v7
+      # NO `ref:` ON THE CHECKOUT, deliberately: the next step moves onto the
+      # validated tag. Feeding any derived value into `ref:` is what CodeQL's
+      # `actions/untrusted-checkout` flags in a `workflow_call` body, validated
+      # or not -- it cannot see the validation.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ inputs.tag-name }}
+          persist-credentials: false
 
-      - uses: actions/setup-go@v7
+      # A tag input must not be interpreted as a branch, PR ref or commit.
+      - name: Switch to the release tag
+        env:
+          TAG_NAME: ${{ inputs.tag-name }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          git check-ref-format "refs/tags/$TAG_NAME"
+          AUTH=$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)
+          git -c "http.$GITHUB_SERVER_URL/.extraheader=AUTHORIZATION: basic $AUTH" \
+            fetch --no-tags --depth=1 origin "+refs/tags/$TAG_NAME:refs/tags/$TAG_NAME"
+          git checkout --detach "refs/tags/$TAG_NAME"
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
           cache: true

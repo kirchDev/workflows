@@ -353,6 +353,16 @@ jobs:
               continue
             fi
 
+            # THE HEAD MUST NOT HAVE MOVED. `gh pr checks` reads the PR's
+            # CURRENT head, while the approval and the landing are bound to
+            # $sha, read above: a push between the two would let green checks
+            # on the new head vouch for an old commit nobody ran them on.
+            now=$(gh pr view "$n" --json headRefOid --jq '.headRefOid')
+            if [ "$now" != "$sha" ]; then
+              echo "PR #$n: head moved from $sha to $now while it was checked — skipping."
+              continue
+            fi
+
             echo "pr=$n" >> "$GITHUB_OUTPUT"
             echo "sha=$sha" >> "$GITHUB_OUTPUT"
             echo "PR #$n: green, approved queue PR $head -> $base at $sha."

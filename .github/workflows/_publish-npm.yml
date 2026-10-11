@@ -55,6 +55,8 @@ on:
 jobs:
   publish:
     name: ${{ inputs.prerelease && 'Publish prerelease' || 'Publish stable release' }}
+    # Publishing must never run in a pull-request or workflow_run context.
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch' || github.event_name == 'release'
     runs-on: ${{ inputs.runner }}
     permissions:
       contents: read
@@ -66,15 +68,41 @@ jobs:
       # OIDC identity.
       id-token: write
     steps:
-      # A stable publish takes the tag release-please just cut; a prerelease
-      # takes the branch it was triggered on.
-      - uses: actions/checkout@v7
+      # NO `ref:` ON THE CHECKOUT, deliberately. It takes the triggering commit,
+      # which is exactly what a prerelease publishes, and a stable publish then
+      # moves onto its tag in the next step. Feeding any derived value into
+      # `ref:` is what CodeQL's `actions/untrusted-checkout` flags in a
+      # `workflow_call` body, validated or not -- it cannot see the validation.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ inputs.prerelease && github.ref || inputs.tag-name }}
+          persist-credentials: false
 
-      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
+      # Qualify the tag so an input cannot select a branch, PR ref or commit,
+      # and refuse a prerelease from anything but a branch.
+      - name: Switch to the publish source
+        env:
+          TAG_NAME: ${{ inputs.tag-name }}
+          PRERELEASE: ${{ inputs.prerelease }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if [ "$PRERELEASE" = "true" ]; then
+            if [[ "$GITHUB_REF" != refs/heads/* ]]; then
+              echo "::error::Prereleases require a branch push or dispatch."
+              exit 1
+            fi
+            exit 0
+          fi
 
-      - uses: actions/setup-node@v7
+          git check-ref-format "refs/tags/$TAG_NAME"
+          AUTH=$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)
+          git -c "http.$GITHUB_SERVER_URL/.extraheader=AUTHORIZATION: basic $AUTH" \
+            fetch --no-tags --depth=1 origin "+refs/tags/$TAG_NAME:refs/tags/$TAG_NAME"
+          git checkout --detach "refs/tags/$TAG_NAME"
+
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: ${{ inputs.node-version }}
           cache: pnpm
