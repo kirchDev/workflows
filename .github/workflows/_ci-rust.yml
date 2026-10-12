@@ -69,6 +69,21 @@ on:
         required: false
         type: string
         default: ''
+      locked:
+        description: Require Cargo.lock to remain unchanged during Clippy and tests.
+        required: false
+        type: boolean
+        default: false
+      all-features:
+        description: Enable every crate feature during Clippy and tests.
+        required: false
+        type: boolean
+        default: true
+      features:
+        description: Additional Cargo features, separated by commas or spaces.
+        required: false
+        type: string
+        default: ''
       cargo-deny:
         description: >-
           Run the supply-chain gate. Left as an input rather than derived from a
@@ -144,7 +159,35 @@ jobs:
           # shellcheck disable=SC2086
           sudo apt-get install -y $SYSTEM_DEPENDENCIES
 
+      - name: Detect the repository toolchain
+        id: toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          directory="$PWD"
+          while :; do
+            if [[ -f "$directory/rust-toolchain.toml" || -f "$directory/rust-toolchain" ]]; then
+              echo 'pinned=true' >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            if [[ "$directory" == "$GITHUB_WORKSPACE" || "$directory" == / ]]; then break; fi
+            directory=$(dirname "$directory")
+          done
+          echo 'pinned=false' >> "$GITHUB_OUTPUT"
+
+      - name: Install the repository toolchain
+        if: steps.toolchain.outputs.pinned == 'true'
+        shell: bash
+        env:
+          COMPONENTS: ${{ inputs.components }}
+        run: |
+          set -euo pipefail
+          rustup toolchain install --no-self-update
+          read -r -a components <<< "${COMPONENTS//,/ }"
+          if (( ${#components[@]} )); then rustup component add "${components[@]}"; fi
+
       - name: Set up Rust
+        if: steps.toolchain.outputs.pinned != 'true'
         uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
         with:
           components: ${{ inputs.components }}
@@ -165,10 +208,32 @@ jobs:
       # `-D warnings` makes clippy a gate rather than advice. Without it the job
       # stays green while the lint output scrolls past unread.
       - name: Clippy
-        run: cargo clippy --all-targets --all-features -- -D warnings
+        shell: bash
+        env:
+          LOCKED: ${{ inputs.locked }}
+          ALL_FEATURES: ${{ inputs.all-features }}
+          FEATURES: ${{ inputs.features }}
+        run: |
+          set -euo pipefail
+          args=(--all-targets)
+          if [[ "$LOCKED" == true ]]; then args+=(--locked); fi
+          if [[ "$ALL_FEATURES" == true ]]; then args+=(--all-features); fi
+          if [[ -n "$FEATURES" ]]; then args+=(--features "$FEATURES"); fi
+          cargo clippy "${args[@]}" -- -D warnings
 
       - name: Tests
-        run: cargo test --all-features
+        shell: bash
+        env:
+          LOCKED: ${{ inputs.locked }}
+          ALL_FEATURES: ${{ inputs.all-features }}
+          FEATURES: ${{ inputs.features }}
+        run: |
+          set -euo pipefail
+          args=()
+          if [[ "$LOCKED" == true ]]; then args+=(--locked); fi
+          if [[ "$ALL_FEATURES" == true ]]; then args+=(--all-features); fi
+          if [[ -n "$FEATURES" ]]; then args+=(--features "$FEATURES"); fi
+          cargo test "${args[@]}"
 
   # THE ONE CHECK BRANCH PROTECTION NAMES. `Rust (ubuntu-latest)` carries
   # the platform in its name, so a rule naming it waits forever the day the

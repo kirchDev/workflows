@@ -30,14 +30,15 @@
     "format": "oxfmt --check .",
     "format:fix": "oxfmt .",
     "typecheck": "tsc --noEmit",
-    "check": "pnpm lint && pnpm lint:actions && pnpm format && pnpm typecheck && pnpm check:policy && pnpm check:inputs",
+    "check": "pnpm lint && pnpm lint:actions && pnpm format && pnpm typecheck && pnpm check:policy && pnpm check:inputs && pnpm check:workflows",
     "check:fix": "pnpm lint:fix && pnpm format:fix",
     "check:policy": "node scripts/check-policy-parity.ts",
     "check:inputs": "node scripts/check-caller-inputs.ts",
     "skills:update": "pnpm dlx skills@latest update -p -y",
     "taze": "taze",
     "taze:w": "taze -w",
-    "prepare": "husky"
+    "prepare": "husky",
+    "check:workflows": "node --test scripts/workflow-contracts.test.ts"
   },
   "devDependencies": {
     "@commitlint/cli": "^21.2.3",
