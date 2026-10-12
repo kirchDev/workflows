@@ -360,3 +360,24 @@ Here the tags are the interface: every caller pins one, so a release is never co
 ## 📄 License
 
 [MIT](LICENSE) © [Titus Kirch](https://github.com/TitusKirch/) / [IT-Dienstleistungen Titus Kirch](https://kirch.dev)
+
+### Monorepo checks and caches
+
+`_ci-check.yml` accepts `fetch-depth` (default `1`). Set it to `0` when a
+repository check compares migration filenames or other inputs against a base
+commit. Checkout fetches the history before removing its credentials; install
+commands do not need an authenticated `git fetch` afterwards.
+
+`_detect-changes.yml` uses the pull request API without checking out the repository.
+Branch pushes compare against the commit before the push, with history fetched
+by checkout. `force: true` returns every filter name without a checkout. Keep the
+filters in the calling repository, including shared contracts and generators.
+
+`_ci-rust.yml` finds `rust-toolchain.toml` or `rust-toolchain` from its
+`working-directory` up to the repository root and installs that toolchain. Without
+one it retains the stable fallback. `locked: true` requires the lockfile to stay
+unchanged; `all-features: false` selects the crate's default features, while
+`features` selects additional features. Existing callers retain `locked: false`
+and `all-features: true`. Use `cache-shared-key` consistently when a trusted branch
+run should populate the cache consumed by pull requests. A cache written by a PR
+serves that PR's reruns, not other PRs.
