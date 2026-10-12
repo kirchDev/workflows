@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.14.0](https://github.com/kirchDev/workflows/compare/v0.13.0...v0.14.0) (2026-10-12)
+
+
+### Features
+
+* **ci-rust:** support lighter CI debug information ([0c6fff7](https://github.com/kirchDev/workflows/commit/0c6fff77f5ef6dbbcbee6a7c93e805ee7783bb16))
+* **ci:** allow caller-owned aggregate gates ([51cbc3c](https://github.com/kirchDev/workflows/commit/51cbc3c3340f85070f0459a00622896043696504))
+
+
+### Bug Fixes
+
+* **ci-rust:** write only constant profile environment values ([fd563a2](https://github.com/kirchDev/workflows/commit/fd563a2ace30a3455f18df0e0b100241eaf0a72e))
+
 ## [0.13.0](https://github.com/kirchDev/workflows/compare/v0.12.1...v0.13.0) (2026-10-12)
 
 
