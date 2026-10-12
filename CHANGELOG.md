@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.13.0](https://github.com/kirchDev/workflows/compare/v0.12.1...v0.13.0) (2026-10-12)
+
+
+### Features
+
+* **ci-check:** support authenticated history checkout ([7b54376](https://github.com/kirchDev/workflows/commit/7b54376628ec397751fd2af67ee42238166ee146))
+* **ci-gradle:** add cached wrapper checks and smoke coverage ([50ad848](https://github.com/kirchDev/workflows/commit/50ad848c39839229d26f2c56cd82b67179ee0031))
+* **ci-rust:** respect repository toolchains and cargo options ([3d2c378](https://github.com/kirchDev/workflows/commit/3d2c3784af27c1e5fb9cf96cff633754ef1001e3))
+
+
+### Bug Fixes
+
+* **ci:** detect changes without redundant or unauthenticated fetches ([d605501](https://github.com/kirchDev/workflows/commit/d6055011f5b976e6da1b7124a797ebcbe986f416))
+
 ## [0.12.1](https://github.com/kirchDev/workflows/compare/v0.12.0...v0.12.1) (2026-10-11)
 
 
