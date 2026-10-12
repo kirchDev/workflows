@@ -19,3 +19,4 @@ This log holds decisions about **this repository**: what a body may assume, what
 | [ADR-0007](/adr/0007-run-the-gate-as-one-job-with-a-step-per-check) | Run the gate as one job with a step per check | Accepted | 2026-09-01 |
 | [ADR-0008](/adr/0008-give-each-reporter-its-own-comment-thread)     | Give each reporter its own comment thread     | Accepted | 2026-09-01 |
 | [ADR-0009](/adr/0009-write-a-body-before-its-second-caller)         | Write a body before its second caller         | Accepted | 2026-09-01 |
+| [ADR-0010](/adr/0010-allow-callers-to-own-the-aggregate-gate)       | Allow callers to own the aggregate gate       | Accepted | 2026-10-12 |

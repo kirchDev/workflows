@@ -37,6 +37,10 @@ name: CI Check (reusable)
 on:
   workflow_call:
     inputs:
+      gate:
+        description: Keep the stable Gate job; disable only when the caller aggregates every job result itself.
+        type: boolean
+        default: true
       runner:
         description: >-
           Runner label for this body's jobs. THE ONE THING A BODY CANNOT DERIVE:
@@ -318,7 +322,7 @@ jobs:
     # This way the gate is cancelled with the run it belongs to, and the run that
     # superseded it reports under the same name. A job cancelled on its own (a
     # timeout, say) still fails the gate, which is correct.
-    if: ${{ !cancelled() }}
+    if: ${{ !cancelled() && inputs.gate }}
     runs-on: ${{ inputs.runner }}
     permissions: {}
     steps:

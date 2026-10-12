@@ -21,6 +21,10 @@ name: CI Rust (reusable)
 on:
   workflow_call:
     inputs:
+      gate:
+        description: Keep the stable Gate job; disable only when the caller aggregates every job result itself.
+        type: boolean
+        default: true
       runner:
         description: >-
           Runner label for this body's jobs. THE ONE THING A BODY CANNOT DERIVE:
@@ -82,6 +86,13 @@ on:
       features:
         description: Additional Cargo features, separated by commas or spaces.
         required: false
+        type: string
+        default: ''
+      profile-debug:
+        description: >-
+          Optional Cargo dev/test debug information override. Empty preserves the
+          repository settings; line-tables-only keeps file/line backtraces with
+          less compilation and cache data than full debug information.
         type: string
         default: ''
       cargo-deny:
@@ -192,6 +203,25 @@ jobs:
         with:
           components: ${{ inputs.components }}
 
+      - name: Configure CI debug information
+        if: inputs.profile-debug != ''
+        shell: bash
+        env:
+          PROFILE_DEBUG: ${{ inputs.profile-debug }}
+        run: |
+          set -euo pipefail
+          case "$PROFILE_DEBUG" in
+            0 | false | none) debug=0 ;;
+            1 | limited) debug=1 ;;
+            2 | true | full) debug=2 ;;
+            line-tables-only) debug=line-tables-only ;;
+            line-directives-only) debug=line-directives-only ;;
+            *) echo '::error::Invalid Cargo profile-debug value.'; exit 1 ;;
+          esac
+          # Set before rust-cache: its CARGO prefix includes both values in the cache key.
+          echo "CARGO_PROFILE_DEV_DEBUG=$debug" >> "$GITHUB_ENV"
+          echo "CARGO_PROFILE_TEST_DEBUG=$debug" >> "$GITHUB_ENV"
+
       # Keyed on the workspace so a crate in a subdirectory caches correctly;
       # a cold Rust build is minutes, a warm one seconds.
       - name: Cache the Rust build
@@ -261,7 +291,7 @@ jobs:
     # This way the gate is cancelled with the run it belongs to, and the run that
     # superseded it reports under the same name. A job cancelled on its own (a
     # timeout, say) still fails the gate, which is correct.
-    if: ${{ !cancelled() }}
+    if: ${{ !cancelled() && inputs.gate }}
     runs-on: ${{ inputs.runner }}
     permissions: {}
     steps:

@@ -143,3 +143,66 @@ test('Gradle task arguments remain data and an empty task list fails', () => {
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test('CI debug overrides reject injected environment lines and configure both Cargo profiles', () => {
+  const root = mkdtempSync(join(tmpdir(), 'workflow-debug-'));
+  const output = join(root, 'environment');
+  try {
+    for (const value of [
+      'line-tables-only',
+      '0',
+      'full',
+      'invalid',
+      '0\nEVIL=true'
+    ]) {
+      writeFileSync(output, '');
+      const run = spawnSync(
+        'bash',
+        ['-c', script('Configure CI debug information')],
+        {
+          env: { ...process.env, PROFILE_DEBUG: value, GITHUB_ENV: output },
+          encoding: 'utf8'
+        }
+      );
+      const valid = ['line-tables-only', '0', 'full'].includes(value);
+      assert.equal(run.status, valid ? 0 : 1, run.stderr);
+      assert.equal(
+        readFileSync(output, 'utf8'),
+        valid
+          ? `CARGO_PROFILE_DEV_DEBUG=${value === 'full' ? '2' : value}\nCARGO_PROFILE_TEST_DEBUG=${value === 'full' ? '2' : value}\n`
+          : ''
+      );
+    }
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('optional aggregate gates remain on by default and reject failed or cancelled dependencies', () => {
+  for (const name of ['check', 'rust', 'gradle']) {
+    const source = readFileSync(`.github/workflows/_ci-${name}.yml`, 'utf8');
+    assert.match(
+      source,
+      /      gate:\n[\s\S]*?        type: boolean\n        default: true/u
+    );
+    const gate = source.split('\n  gate:\n')[1]!;
+    assert.ok(gate.includes('if: ${{ !cancelled() && inputs.gate }}'));
+    const command = gate
+      .split('        run: |\n')[1]!
+      .split('\n')
+      .filter((line) => line.startsWith('          '))
+      .map((line) => line.slice(10))
+      .join('\n');
+    for (const result of ['success', 'skipped', 'failure', 'cancelled']) {
+      const run = spawnSync('bash', ['-c', command], {
+        env: { ...process.env, RESULT: result, RESULTS: `success ${result}` },
+        encoding: 'utf8'
+      });
+      assert.equal(
+        run.status,
+        ['success', 'skipped'].includes(result) ? 0 : 1,
+        run.stderr
+      );
+    }
+  }
+});
