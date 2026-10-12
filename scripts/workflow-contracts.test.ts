@@ -169,7 +169,7 @@ test('CI debug overrides reject injected environment lines and configure both Ca
       assert.equal(
         readFileSync(output, 'utf8'),
         valid
-          ? `CARGO_PROFILE_DEV_DEBUG=${value}\nCARGO_PROFILE_TEST_DEBUG=${value}\n`
+          ? `CARGO_PROFILE_DEV_DEBUG=${value === 'full' ? '2' : value}\nCARGO_PROFILE_TEST_DEBUG=${value === 'full' ? '2' : value}\n`
           : ''
       );
     }
