@@ -107,3 +107,39 @@ test('Cargo options preserve existing defaults and pass feature text as one argu
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test('Gradle task arguments remain data and an empty task list fails', () => {
+  const root = mkdtempSync(join(tmpdir(), 'workflow-gradle-'));
+  const output = join(root, 'arguments');
+  const body = readFileSync('.github/workflows/_ci-gradle.yml', 'utf8')
+    .split('      - name: Run Gradle\n')[1]!
+    .split('      - name: Preserve')[0]!;
+  const command = body
+    .split('        run: |\n')[1]!
+    .split('\n')
+    .filter((line) => line.startsWith('          '))
+    .map((line) => line.slice(10))
+    .join('\n');
+  writeFileSync(
+    join(root, 'gradlew'),
+    '#!/bin/sh\nprintf "%s\\n" "$@" > "$ARGS_FILE"\n',
+    { mode: 0o755 }
+  );
+  try {
+    for (const tasks of ['check --build-cache', 'check;echo injected', '']) {
+      const run = spawnSync('bash', ['-c', command], {
+        cwd: root,
+        env: { ...process.env, TASKS: tasks, ARGS_FILE: output },
+        encoding: 'utf8'
+      });
+      assert.equal(run.status, tasks ? 0 : 1, run.stderr);
+      if (tasks)
+        assert.deepEqual(
+          readFileSync(output, 'utf8').trim().split('\n'),
+          tasks.split(' ')
+        );
+    }
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});

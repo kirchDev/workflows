@@ -1,0 +1,16 @@
+# yaml-language-server: $schema=https://json.schemastore.org/github-workflow.json
+name: Gradle smoke
+on:
+  pull_request:
+    branches: [main, dev]
+    types: [opened, synchronize, reopened, ready_for_review]
+  push:
+    branches: [dev, main]
+permissions:
+  contents: read
+jobs:
+  gradle:
+    uses: ./.github/workflows/_ci-gradle.yml
+    with:
+      working-directory: fixtures/gradle
+      java-version: '25'

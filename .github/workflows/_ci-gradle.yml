@@ -1,0 +1,119 @@
+# yaml-language-server: $schema=https://json.schemastore.org/github-workflow.json
+# The first consumer, TitusKirch/mc-network, uses the same body for PR checks
+# and trusted branch cache population. Its preparation commands stay in the caller.
+name: CI Gradle (reusable)
+
+on:
+  workflow_call:
+    inputs:
+      runner:
+        description: Runner for the Gradle build and gate.
+        type: string
+        default: ubuntu-latest
+      working-directory:
+        description: Directory containing the Gradle wrapper.
+        type: string
+        default: .
+      java-version:
+        description: JDK required by the project's toolchain.
+        type: string
+        required: true
+      tasks:
+        description: Space-separated Gradle tasks and flags.
+        type: string
+        default: check
+      node-version:
+        description: Node version when build preparation needs pnpm; empty skips Node setup.
+        type: string
+        default: ''
+      prepare-command:
+        description: Command run at the repository root before Gradle, with a read-only repository token.
+        type: string
+        default: ''
+      timeout-minutes:
+        description: Gradle job timeout.
+        type: number
+        default: 30
+    secrets:
+      GRADLE_ENCRYPTION_KEY:
+        description: Optional base64 AES key to persist Gradle's configuration cache.
+        required: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-ci-gradle-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: Gradle
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: ${{ inputs.timeout-minutes }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        if: inputs.node-version != ''
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        if: inputs.node-version != ''
+        with:
+          node-version: ${{ inputs.node-version }}
+          cache: pnpm
+      - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+        with:
+          distribution: temurin
+          java-version: ${{ inputs.java-version }}
+      - uses: gradle/actions/setup-gradle@b9bee63ef481cc545e4517ec730544a4d8b1dfa0 # v6.4.0
+        with:
+          # Trusted branch runs populate caches for PRs against that branch; fork PRs only read.
+          cache-read-only: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository }}
+          cache-encryption-key: ${{ secrets.GRADLE_ENCRYPTION_KEY }}
+      - name: Prepare build inputs
+        if: inputs.prepare-command != ''
+        shell: bash
+        env:
+          PREPARE_COMMAND: ${{ inputs.prepare-command }}
+          GITHUB_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ github.token }}
+        run: bash -euo pipefail -c "$PREPARE_COMMAND"
+      - name: Run Gradle
+        working-directory: ${{ inputs.working-directory }}
+        shell: bash
+        env:
+          TASKS: ${{ inputs.tasks }}
+        run: |
+          set -euo pipefail
+          read -r -a tasks <<< "$TASKS"
+          if (( ${#tasks[@]} == 0 )); then
+            echo '::error::At least one Gradle task is required.'
+            exit 1
+          fi
+          ./gradlew "${tasks[@]}"
+      - name: Preserve failed test reports
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: gradle-test-reports-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ inputs.working-directory }}/**/build/reports/tests/
+          if-no-files-found: ignore
+          retention-days: 7
+
+  gate:
+    name: Gate
+    needs: check
+    if: ${{ !cancelled() }}
+    runs-on: ${{ inputs.runner }}
+    permissions: {}
+    steps:
+      - name: Gradle must have succeeded or been skipped
+        env:
+          RESULT: ${{ needs.check.result }}
+        run: |
+          case "$RESULT" in
+            success | skipped) ;;
+            *) echo "::error::Gradle ended as '$RESULT'."; exit 1 ;;
+          esac

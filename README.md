@@ -381,3 +381,18 @@ unchanged; `all-features: false` selects the crate's default features, while
 and `all-features: true`. Use `cache-shared-key` consistently when a trusted branch
 run should populate the cache consumed by pull requests. A cache written by a PR
 serves that PR's reruns, not other PRs.
+
+### Gradle projects
+
+`_ci-gradle.yml` runs the repository wrapper with Temurin and `setup-gradle`.
+Set `working-directory` and `java-version`; `tasks` defaults to `check`. An empty
+task list fails. Optional `node-version` enables pnpm and Node setup, and
+`prepare-command` runs from the checkout root to install dependencies or stage
+compiler inputs. Preparation receives a read-only repository token.
+
+Pass the named `GRADLE_ENCRYPTION_KEY` secret to persist configuration-cache data.
+Without it, dependency and task caches still work. Trusted branch and same-repo PR
+runs may write the cache; fork PRs only read. Trigger a caller on the integration
+branch to populate caches for new PRs. The body preserves failed test reports and
+reports a stable `Gate`; `gradle-smoke.yml` exercises it against a pinned wrapper
+and a minimal fixture on every PR and integration push.
