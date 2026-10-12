@@ -6,6 +6,10 @@ name: CI Gradle (reusable)
 on:
   workflow_call:
     inputs:
+      gate:
+        description: Keep the stable Gate job; disable only when the caller aggregates every job result itself.
+        type: boolean
+        default: true
       runner:
         description: Runner for the Gradle build and gate.
         type: string
@@ -105,7 +109,7 @@ jobs:
   gate:
     name: Gate
     needs: check
-    if: ${{ !cancelled() }}
+    if: ${{ !cancelled() && inputs.gate }}
     runs-on: ${{ inputs.runner }}
     permissions: {}
     steps:

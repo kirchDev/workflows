@@ -143,3 +143,32 @@ test('Gradle task arguments remain data and an empty task list fails', () => {
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test('optional aggregate gates remain on by default and reject failed or cancelled dependencies', () => {
+  for (const name of ['check', 'rust', 'gradle']) {
+    const source = readFileSync(`.github/workflows/_ci-${name}.yml`, 'utf8');
+    assert.match(
+      source,
+      /      gate:\n[\s\S]*?        type: boolean\n        default: true/u
+    );
+    const gate = source.split('\n  gate:\n')[1]!;
+    assert.ok(gate.includes('if: ${{ !cancelled() && inputs.gate }}'));
+    const command = gate
+      .split('        run: |\n')[1]!
+      .split('\n')
+      .filter((line) => line.startsWith('          '))
+      .map((line) => line.slice(10))
+      .join('\n');
+    for (const result of ['success', 'skipped', 'failure', 'cancelled']) {
+      const run = spawnSync('bash', ['-c', command], {
+        env: { ...process.env, RESULT: result, RESULTS: `success ${result}` },
+        encoding: 'utf8'
+      });
+      assert.equal(
+        run.status,
+        ['success', 'skipped'].includes(result) ? 0 : 1,
+        run.stderr
+      );
+    }
+  }
+});
