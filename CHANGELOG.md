@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.14.1](https://github.com/kirchDev/workflows/compare/v0.14.0...v0.14.1) (2026-10-12)
+
+
+### Bug Fixes
+
+* **ci-go:** default golangci-lint to v2.14.0 ([eb38486](https://github.com/kirchDev/workflows/commit/eb38486b72fc501687d800edb2db99da156fb5ca))
+* **ci-gradle:** pin setup-gradle to the v6.4.0 commit ([75055af](https://github.com/kirchDev/workflows/commit/75055af1e78c05d555135fafc89b65c3bf65c450))
+
 ## [0.14.0](https://github.com/kirchDev/workflows/compare/v0.13.0...v0.14.0) (2026-10-12)
 
 
