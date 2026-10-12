@@ -24,7 +24,7 @@ on:
         description: golangci-lint version to run.
         required: false
         type: string
-        default: v2.12.2
+        default: v2.14.0
       acceptance-tests:
         description: >-
           Run the acceptance suite. It drives a real apply/refresh/import/destroy
