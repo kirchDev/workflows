@@ -363,6 +363,12 @@ Here the tags are the interface: every caller pins one, so a release is never co
 
 ### Monorepo checks and caches
 
+`_ci-check.yml`, `_ci-rust.yml` and `_ci-gradle.yml` accept `gate: false` when
+composed beneath a caller-owned gate that depends on every reusable call and
+rejects failures and cancellations. The default is `true`, preserving the stable
+`<caller-job> / Gate` check for existing branch protection. Only opt out after
+confirming branch protection requires the caller's aggregate check.
+
 `_ci-check.yml` accepts `fetch-depth` (default `1`). Set it to `0` when a
 repository check compares migration filenames or other inputs against a base
 commit. Checkout fetches the history before removing its credentials; install
@@ -382,6 +388,12 @@ and `all-features: true`. Use `cache-shared-key` consistently when a trusted bra
 run should populate the cache consumed by pull requests. A cache written by a PR
 serves that PR's reruns, not other PRs.
 
+Optional `profile-debug: line-tables-only` reduces dev/test debug information
+while keeping file/line backtraces. Empty preserves the repository's profiles.
+The override is set before restoring the Rust cache, so its `CARGO` environment
+fingerprint separates incompatible builds. Give PR checks and branch cache
+writers the same setting; local builds and release profiles are unaffected.
+
 ### Gradle projects
 
 `_ci-gradle.yml` runs the repository wrapper with Temurin and `setup-gradle`.
@@ -390,8 +402,11 @@ task list fails. Optional `node-version` enables pnpm and Node setup, and
 `prepare-command` runs from the checkout root to install dependencies or stage
 compiler inputs. Preparation receives a read-only repository token.
 
-Pass the named `GRADLE_ENCRYPTION_KEY` secret to persist configuration-cache data.
-Without it, dependency and task caches still work. Trusted branch and same-repo PR
+The named `GRADLE_ENCRYPTION_KEY` secret supplies Gradle's configuration-cache
+encryption key. In the pinned `setup-gradle` v6.4.0, persisting that project cache
+also requires the action's separate opt-in/licensing; the key alone does not
+enable it ([upstream contract](https://github.com/gradle/actions/blob/b9bee63ef481cc545e4517ec730544a4d8b1dfa0/sources/src/cache-service.ts)).
+Dependency and task caches work independently. Trusted branch and same-repo PR
 runs may write the cache; fork PRs only read. Trigger a caller on the integration
 branch to populate caches for new PRs. The body preserves failed test reports and
 reports a stable `Gate`; `gradle-smoke.yml` exercises it against a pinned wrapper

@@ -40,7 +40,7 @@ on:
         default: 30
     secrets:
       GRADLE_ENCRYPTION_KEY:
-        description: Optional base64 AES key to persist Gradle's configuration cache.
+        description: Optional base64 AES key for Gradle configuration-cache encryption; persistence requires setup-gradle opt-in/licensing.
         required: false
 
 permissions:
