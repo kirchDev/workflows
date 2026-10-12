@@ -1,0 +1,213 @@
+# Changelog
+
+## [0.14.1](https://github.com/kirchDev/workflows/compare/v0.14.0...v0.14.1) (2026-10-12)
+
+
+### Bug Fixes
+
+* **ci-go:** default golangci-lint to v2.14.0 ([eb38486](https://github.com/kirchDev/workflows/commit/eb38486b72fc501687d800edb2db99da156fb5ca))
+* **ci-gradle:** pin setup-gradle to the v6.4.0 commit ([75055af](https://github.com/kirchDev/workflows/commit/75055af1e78c05d555135fafc89b65c3bf65c450))
+
+## [0.14.0](https://github.com/kirchDev/workflows/compare/v0.13.0...v0.14.0) (2026-10-12)
+
+
+### Features
+
+* **ci-rust:** support lighter CI debug information ([0c6fff7](https://github.com/kirchDev/workflows/commit/0c6fff77f5ef6dbbcbee6a7c93e805ee7783bb16))
+* **ci:** allow caller-owned aggregate gates ([51cbc3c](https://github.com/kirchDev/workflows/commit/51cbc3c3340f85070f0459a00622896043696504))
+
+
+### Bug Fixes
+
+* **ci-rust:** write only constant profile environment values ([fd563a2](https://github.com/kirchDev/workflows/commit/fd563a2ace30a3455f18df0e0b100241eaf0a72e))
+
+## [0.13.0](https://github.com/kirchDev/workflows/compare/v0.12.1...v0.13.0) (2026-10-12)
+
+
+### Features
+
+* **ci-check:** support authenticated history checkout ([7b54376](https://github.com/kirchDev/workflows/commit/7b54376628ec397751fd2af67ee42238166ee146))
+* **ci-gradle:** add cached wrapper checks and smoke coverage ([50ad848](https://github.com/kirchDev/workflows/commit/50ad848c39839229d26f2c56cd82b67179ee0031))
+* **ci-rust:** respect repository toolchains and cargo options ([3d2c378](https://github.com/kirchDev/workflows/commit/3d2c3784af27c1e5fb9cf96cff633754ef1001e3))
+
+
+### Bug Fixes
+
+* **ci:** detect changes without redundant or unauthenticated fetches ([d605501](https://github.com/kirchDev/workflows/commit/d6055011f5b976e6da1b7124a797ebcbe986f416))
+
+## [0.12.1](https://github.com/kirchDev/workflows/compare/v0.12.0...v0.12.1) (2026-10-11)
+
+
+### Bug Fixes
+
+* **ci:** stop persisting checkout credentials ([90d5cdf](https://github.com/kirchDev/workflows/commit/90d5cdf436140200493692d1b03677d7ac393b9b))
+* pin the remaining actions and close the queue landing race ([#56](https://github.com/kirchDev/workflows/issues/56)) ([5fe981a](https://github.com/kirchDev/workflows/commit/5fe981a5547d0ee467f5cda6376828b4fb3dfe67))
+* **publish:** move onto the release tag after an unparameterised checkout ([522f374](https://github.com/kirchDev/workflows/commit/522f374c3b194516868e85eb5bf5408f33509409))
+* **publish:** restrict checkouts to trusted release sources ([b086b4f](https://github.com/kirchDev/workflows/commit/b086b4fa9c7b43c39f70e8e5e70b27be01f7b575))
+
+## [0.12.0](https://github.com/kirchDev/workflows/compare/v0.11.0...v0.12.0) (2026-09-14)
+
+
+### Features
+
+* **ci:** add a Java setup input to the check, E2E and Lighthouse bodies ([490c525](https://github.com/kirchDev/workflows/commit/490c5252789874bb537b6f2a63d2678cbf207136)), closes [#50](https://github.com/kirchDev/workflows/issues/50)
+
+## [0.11.0](https://github.com/kirchDev/workflows/compare/v0.10.0...v0.11.0) (2026-09-13)
+
+
+### Features
+
+* **ci-check:** let a caller cache remote source downloads ([33c7730](https://github.com/kirchDev/workflows/commit/33c7730fe3622b4e3bafef3f046c21df6862cbc5)), closes [#47](https://github.com/kirchDev/workflows/issues/47)
+
+## [0.10.0](https://github.com/kirchDev/workflows/compare/v0.9.0...v0.10.0) (2026-09-09)
+
+
+### Features
+
+* **ci-rust:** let a caller name the rust-cache key family ([c179b81](https://github.com/kirchDev/workflows/commit/c179b8183ff12de16acbb2f2237af993dfc7c4cb))
+* **ci-rust:** let a caller name the rust-cache key family ([#44](https://github.com/kirchDev/workflows/issues/44)) ([4383d6b](https://github.com/kirchDev/workflows/commit/4383d6b5b0e0aba9c561fc9b81a7131cff08d4c0))
+
+## [0.9.0](https://github.com/kirchDev/workflows/compare/v0.8.2...v0.9.0) (2026-09-08)
+
+
+### Features
+
+* **deploy:** add central bodies for Forge and Wrangler deployments ([#41](https://github.com/kirchDev/workflows/issues/41)) ([0c4dc41](https://github.com/kirchDev/workflows/commit/0c4dc41d9c52f0af9bdc2ff209a6e7d4b4986ac3))
+
+## [0.8.2](https://github.com/kirchDev/workflows/compare/v0.8.1...v0.8.2) (2026-09-06)
+
+
+### Bug Fixes
+
+* **workflows:** pin every third-party action to a commit SHA ([#38](https://github.com/kirchDev/workflows/issues/38)) ([32512f8](https://github.com/kirchDev/workflows/commit/32512f806c34b5ae4feb3375ae13eeebd6276b72))
+
+## [0.8.1](https://github.com/kirchDev/workflows/compare/v0.8.0...v0.8.1) (2026-09-06)
+
+
+### Bug Fixes
+
+* give the release-please and promotion-pr bodies their own concurrency group ([#34](https://github.com/kirchDev/workflows/issues/34)) ([a375f91](https://github.com/kirchDev/workflows/commit/a375f91afe6aff5742432eaee4259d2dafba602c))
+
+## [0.8.0](https://github.com/kirchDev/workflows/compare/v0.7.0...v0.8.0) (2026-09-05)
+
+
+### ⚠ BREAKING CHANGES
+
+* move to pnpm 12
+* this repository now requires pnpm 12.
+
+### Bug Fixes
+
+* **promotion-pr:** treat nothing to promote as success ([#30](https://github.com/kirchDev/workflows/issues/30)) ([3c77eb0](https://github.com/kirchDev/workflows/commit/3c77eb0e1bb8fca2fe657466f3ba84541728775e))
+
+
+### Reverts
+
+* go back to pnpm 11.25.0 ([014f31d](https://github.com/kirchDev/workflows/commit/014f31da66fc29c78488dd2ff62a876d92c8fb78))
+
+
+### Miscellaneous Chores
+
+* move to pnpm 12 ([e3664bc](https://github.com/kirchDev/workflows/commit/e3664bc98e76698fc42747b6f939580e5f4648b1))
+* pilot pnpm 12 and align the toolchain ([1be842c](https://github.com/kirchDev/workflows/commit/1be842cf1880151a12f2a47cf0fa0b1e275f079a))
+
+## [0.7.0](https://github.com/kirchDev/workflows/compare/v0.6.0...v0.7.0) (2026-09-02)
+
+
+### Features
+
+* **ci:** give the generator the caller's own token ([6f83e36](https://github.com/kirchDev/workflows/commit/6f83e361f3a8bceac9da4c1a956a1e4253ae9cd5))
+* **ci:** let the change check decide who gets assigned ([2a0d17a](https://github.com/kirchDev/workflows/commit/2a0d17a95724aa61f431a1ccf5cca575693a0c06))
+
+## [0.6.0](https://github.com/kirchDev/workflows/compare/v0.5.0...v0.6.0) (2026-09-02)
+
+
+### Features
+
+* **ci:** add a body for regenerating a file and opening a PR ([de4cc4c](https://github.com/kirchDev/workflows/commit/de4cc4cb72f1202979b0a577443d114d73954980))
+* **ci:** let a caller answer whether the regenerated file really changed ([bcdb23c](https://github.com/kirchDev/workflows/commit/bcdb23ce80a2e1e385a3ab08cf32a358268883b9))
+
+## [0.5.0](https://github.com/kirchDev/workflows/compare/v0.4.0...v0.5.0) (2026-09-02)
+
+
+### Features
+
+* **ci:** let the gate body install PHP for a Laravel repo's Pint ([51880db](https://github.com/kirchDev/workflows/commit/51880dba3034f355b59a847c25f8073136098997))
+
+## [0.4.0](https://github.com/kirchDev/workflows/compare/v0.3.0...v0.4.0) (2026-09-02)
+
+
+### Features
+
+* **ci:** add a body for the bot sync-branch cleanup ([02436f0](https://github.com/kirchDev/workflows/commit/02436f0d750fb26b7ff38b3c97273bf491d1ce9b))
+* prove every caller input exists on the body it calls ([f2f54fe](https://github.com/kirchDev/workflows/commit/f2f54fe8a82d5faf5510408cecaea49eb96c982a))
+
+## [0.3.0](https://github.com/kirchDev/workflows/compare/v0.2.0...v0.3.0) (2026-09-02)
+
+
+### Features
+
+* **ci:** clean up merged release-please branches in the body ([ab7aa43](https://github.com/kirchDev/workflows/commit/ab7aa433a6d1e0208148a6fded930ae191c5cd65))
+* **ci:** let a caller name the runner its jobs run on ([97df12c](https://github.com/kirchDev/workflows/commit/97df12c12dea7930d6349fc6b24e5fb836a3ea2e))
+
+## [0.2.0](https://github.com/kirchDev/workflows/compare/v0.1.3...v0.2.0) (2026-09-02)
+
+
+### ⚠ BREAKING CHANGES
+
+* **ci:** the required status check becomes <caller-job> / Gate. A rule naming a body job keeps waiting, and ci.yml may no longer carry paths-ignore — a workflow that does not trigger reports no check, and a required check that never reports blocks the merge rather than failing it.
+
+### Features
+
+* **ci:** end every CI body in a stable Gate job ([e268a5d](https://github.com/kirchDev/workflows/commit/e268a5db494880adb92446eadb578b39d3a20cc6))
+
+## [0.1.3](https://github.com/kirchDev/workflows/compare/v0.1.2...v0.1.3) (2026-09-01)
+
+
+### Bug Fixes
+
+* **ci:** restore the static analysis job the body had dropped ([8d2c761](https://github.com/kirchDev/workflows/commit/8d2c761170b79fb00925dee8506f6d9abbcfa249))
+
+## [0.1.2](https://github.com/kirchDev/workflows/compare/v0.1.1...v0.1.2) (2026-09-01)
+
+
+### Bug Fixes
+
+* **ci:** stop two bodies in one caller from cancelling each other ([64216e0](https://github.com/kirchDev/workflows/commit/64216e005e6d3bcf2844ed051445ae2779e3e02c))
+
+## [0.1.1](https://github.com/kirchDev/workflows/compare/v0.1.0...v0.1.1) (2026-09-01)
+
+
+### Bug Fixes
+
+* **ci:** run the analysis when a draft becomes ready ([edeffcd](https://github.com/kirchDev/workflows/commit/edeffcd93e15380e5db8880eb035a5ef2be5a1ad))
+* **ci:** scan once per change instead of twice ([2008c11](https://github.com/kirchDev/workflows/commit/2008c11ae01fb0d5052d6fed8a589379cc244f56))
+
+## 0.1.0 (2026-09-01)
+
+
+### Features
+
+* **actions:** ship the node setup as a composite action ([68bb427](https://github.com/kirchDev/workflows/commit/68bb4273539c7cb172400a61dd19c66185ea4305))
+* **ci:** add the Rust body and the Lighthouse shard merge ([a720bfc](https://github.com/kirchDev/workflows/commit/a720bfcc22938708d1f1042fd8345d6588e99889))
+* **ci:** add the stack family bodies ([53a23b0](https://github.com/kirchDev/workflows/commit/53a23b06c53c1dfdaa9a3c8929269a0cb6b28b40))
+* **ci:** give the audit its own sticky comment ([7dc410c](https://github.com/kirchDev/workflows/commit/7dc410c0caa51f62d21973fada3fd5c746fba65b))
+* **ci:** report coverage through kirchDev/coverage-report ([4000c0b](https://github.com/kirchDev/workflows/commit/4000c0bfa22027fa56d5b314fd4973d726c01054))
+* **ci:** run the repo's gate from a reusable body ([804dee8](https://github.com/kirchDev/workflows/commit/804dee83701fd0c1a6ae059721fd9601cc9a09a9))
+* **ci:** skip work that cannot fail ([79f7027](https://github.com/kirchDev/workflows/commit/79f70274ec8ecaffd2107c38a197ac54ac352a28))
+* **codeql:** analyse from a reusable body ([1dd03e4](https://github.com/kirchDev/workflows/commit/1dd03e4efac0658587008f8db45998b0cf24f402))
+* **promotion-pr:** open the promotion PR from a reusable body ([0190471](https://github.com/kirchDev/workflows/commit/0190471612f6a9069d77133e3b8e404aa825d357))
+* **queue:** land the queue from reusable bodies ([44c9a8e](https://github.com/kirchDev/workflows/commit/44c9a8ee81d72e9774f50e5df96319ed6f4098cc))
+* **release:** cut releases from a reusable body ([8b8b9e6](https://github.com/kirchDev/workflows/commit/8b8b9e6067377d52a105ceec661ef9cf5c98aa67))
+* **release:** publish npm packages and provider artifacts from reusable bodies ([3a0b7f2](https://github.com/kirchDev/workflows/commit/3a0b7f2b1390fb73d0a2b83a1e7fa97aa4e1cfdb))
+
+
+### Bug Fixes
+
+* restore the core, git and node stacks ([eee34a8](https://github.com/kirchDev/workflows/commit/eee34a8760e6cb5195a691158702db100a530853))
+* **security:** pass every command input through env, not into the script ([464b42d](https://github.com/kirchDev/workflows/commit/464b42de6cfe99497ab6cfe928a4a6401be3d06f))
+
+
+### Miscellaneous Chores
+
+* request 0.1.0 as the first release ([2336166](https://github.com/kirchDev/workflows/commit/2336166946eea7381b44f3d2305f7e7f2c745f93))
