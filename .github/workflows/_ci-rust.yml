@@ -88,6 +88,13 @@ on:
         required: false
         type: string
         default: ''
+      profile-debug:
+        description: >-
+          Optional Cargo dev/test debug information override. Empty preserves the
+          repository settings; line-tables-only keeps file/line backtraces with
+          less compilation and cache data than full debug information.
+        type: string
+        default: ''
       cargo-deny:
         description: >-
           Run the supply-chain gate. Left as an input rather than derived from a
@@ -195,6 +202,21 @@ jobs:
         uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
         with:
           components: ${{ inputs.components }}
+
+      - name: Configure CI debug information
+        if: inputs.profile-debug != ''
+        shell: bash
+        env:
+          PROFILE_DEBUG: ${{ inputs.profile-debug }}
+        run: |
+          set -euo pipefail
+          case "$PROFILE_DEBUG" in
+            0 | 1 | 2 | false | true | none | limited | full | line-tables-only | line-directives-only) ;;
+            *) echo '::error::Invalid Cargo profile-debug value.'; exit 1 ;;
+          esac
+          # Set before rust-cache: its CARGO prefix includes both values in the cache key.
+          echo "CARGO_PROFILE_DEV_DEBUG=$PROFILE_DEBUG" >> "$GITHUB_ENV"
+          echo "CARGO_PROFILE_TEST_DEBUG=$PROFILE_DEBUG" >> "$GITHUB_ENV"
 
       # Keyed on the workspace so a crate in a subdirectory caches correctly;
       # a cold Rust build is minutes, a warm one seconds.
