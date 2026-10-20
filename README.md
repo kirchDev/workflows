@@ -208,6 +208,14 @@ jobs:
       NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
 ```
 
+> [!IMPORTANT]
+> `sirargonNet` and `kirch-ostendorf` have no Bitwarden access in CI, so their callers pass the Kirch & Ostendorf Release App's PEM directly and skip `BWS_ACCESS_TOKEN`. The body then never touches Bitwarden, and fails with an error if the secret is missing or empty ([ADR-0011](docs/99.adr/0011-accept-the-release-app-pem-as-a-secret-where-bitwarden-is-absent.md)):
+>
+> ```yaml
+>     secrets:
+>       RELEASE_APP_PRIVATE_KEY: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+> ```
+
 <details>
 <summary>Which publish body a repo composes on, and the prerelease fix</summary>
 
