@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.16.0](https://github.com/kirchDev/workflows/compare/v0.15.0...v0.16.0) (2026-10-20)
+
+
+### Features
+
+* pick the queue and regenerated-pr apps by owner ([#72](https://github.com/kirchDev/workflows/issues/72)) ([df09d8d](https://github.com/kirchDev/workflows/commit/df09d8d07139a623e975b734ca859671a296313e))
+
 ## [0.15.0](https://github.com/kirchDev/workflows/compare/v0.14.1...v0.15.0) (2026-10-20)
 
 
