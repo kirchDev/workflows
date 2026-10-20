@@ -398,7 +398,14 @@ filters in the calling repository, including shared contracts and generators.
 
 `_ci-rust.yml` finds `rust-toolchain.toml` or `rust-toolchain` from its
 `working-directory` up to the repository root and installs that toolchain. Without
-one it retains the stable fallback. `locked: true` requires the lockfile to stay
+one it retains the stable fallback. Optional `toolchain` (for example
+`nightly-2026-10-07`) wins over a pin file and becomes the working directory's
+override. A named toolchain installs with `--profile minimal` plus `components`, so
+rustup before 1.28 (Ubuntu's package) works; rustup 1.28+ still installs a pin file
+as written. With a pin or `toolchain`, a slim self-hosted runner without rustup
+fails with an error: pass `system-dependencies: rustup` on Ubuntu or add it to
+the image.
+`locked: true` requires the lockfile to stay
 unchanged; `all-features: false` selects the crate's default features, while
 `features` selects additional features. Existing callers retain `locked: false`
 and `all-features: true`. Use `cache-shared-key` consistently when a trusted branch
