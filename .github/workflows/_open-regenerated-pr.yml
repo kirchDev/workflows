@@ -105,19 +105,29 @@ on:
         default: pnpm install --frozen-lockfile
       app-id:
         description: >-
-          GitHub App the pull request is opened as. Derived would be better, but
-          the App differs per repo and nothing in a repository states which one.
-        required: true
+          GitHub App the pull request is opened as, for kirchDev and TitusKirch
+          (the key is that owner's Release App PEM). Ignored for sirargonNet and
+          kirch-ostendorf, which always open it as the Kirch & Ostendorf Release
+          App — the only app their RELEASE_APP_PRIVATE_KEY fits.
+        required: false
         type: string
+        default: ''
       runner:
         description: Runner label for this body's job.
         required: false
         type: string
         default: ubuntu-latest
     secrets:
+      # Both optional, but one of them must be set once there is a PR to open —
+      # the resolve step fails with an error naming which one.
       BWS_ACCESS_TOKEN:
         description: Bitwarden Secrets Manager access token — opens the App PEM.
-        required: true
+        required: false
+      RELEASE_APP_PRIVATE_KEY:
+        description: >-
+          The Release App's PEM, for owners whose CI has no Bitwarden access.
+          When set, Bitwarden is skipped.
+        required: false
 
 concurrency:
   group: ${{ github.workflow }}-open-regenerated-pr-${{ github.ref }}
@@ -211,22 +221,76 @@ jobs:
       # DERIVED, not configured: each owner authenticates against its own `-ci`
       # mirror, so the vault id follows `github.repository_owner`, exactly as the
       # queue and release bodies do it.
-      - name: Fetch App PEM from Bitwarden
+      #
+      # Same owner table as _release-please.yml: sirargonNet and kirch-ostendorf
+      # open the PR as the Kirch & Ostendorf Release App and pass its PEM as
+      # RELEASE_APP_PRIVATE_KEY, having no Bitwarden in CI (ADR-0011, ADR-0012).
+      - name: Resolve the App for this owner
+        id: app
         if: steps.diff.outputs.changed == 'true' || steps.diff-custom.outputs.changed == 'true'
+        env:
+          OWNER: ${{ github.repository_owner }}
+          APP_ID: ${{ inputs.app-id }}
+          HAS_KEY: ${{ secrets.RELEASE_APP_PRIVATE_KEY != '' }}
+          HAS_BWS: ${{ secrets.BWS_ACCESS_TOKEN != '' }}
+        run: |
+          set -euo pipefail
+          client_id=''
+          pem_id=''
+          case "$OWNER" in
+            sirargonNet | kirch-ostendorf)
+              client_id='Iv23limtBZRLTqgEo3hn'
+              if [ -n "$APP_ID" ]; then
+                echo "::warning::app-id is ignored for $OWNER — the PR is opened as the Kirch & Ostendorf Release App."
+              fi
+              ;;
+            *)
+              if [ -z "$APP_ID" ]; then
+                echo "::error::$OWNER must pass the app-id input."
+                exit 1
+              fi
+              # The action accepts an app id where it asks for a client id.
+              client_id=$APP_ID
+              if [ "$OWNER" = 'kirchDev' ]; then
+                pem_id='3a3459f0-c986-4ff3-a36b-b4550012d41e'
+              else
+                pem_id='29f8317d-29f7-46af-834b-b4550012d477'
+              fi
+              ;;
+          esac
+
+          if [ "$HAS_KEY" = 'true' ]; then
+            source='secret'
+          elif [ -z "$pem_id" ]; then
+            echo "::error::$OWNER has no Release App PEM in Bitwarden — pass it as the RELEASE_APP_PRIVATE_KEY secret."
+            exit 1
+          elif [ "$HAS_BWS" != 'true' ]; then
+            echo "::error::Neither RELEASE_APP_PRIVATE_KEY nor BWS_ACCESS_TOKEN is set (or one is empty) — the App key cannot be read."
+            exit 1
+          else
+            source='bitwarden'
+          fi
+
+          echo "client-id=$client_id" >> "$GITHUB_OUTPUT"
+          echo "pem-id=$pem_id" >> "$GITHUB_OUTPUT"
+          echo "key-source=$source" >> "$GITHUB_OUTPUT"
+
+      - name: Fetch App PEM from Bitwarden
+        if: steps.app.outputs.key-source == 'bitwarden'
         uses: bitwarden/sm-action@1238aae8fc64b212641190a9227c8a734ab1a793 # v3.0.1
         with:
           access_token: ${{ secrets.BWS_ACCESS_TOKEN }}
           cloud_region: eu
           secrets: |
-            ${{ github.repository_owner == 'kirchDev' && '3a3459f0-c986-4ff3-a36b-b4550012d41e' || '29f8317d-29f7-46af-834b-b4550012d477' }} > KIRCHDEV_RELEASE_APP_PEM
+            ${{ steps.app.outputs.pem-id }} > RELEASE_APP_PEM
 
       - name: Mint the App token
         id: app-token
         if: steps.diff.outputs.changed == 'true' || steps.diff-custom.outputs.changed == 'true'
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         with:
-          app-id: ${{ inputs.app-id }}
-          private-key: ${{ env.KIRCHDEV_RELEASE_APP_PEM }}
+          client-id: ${{ steps.app.outputs.client-id }}
+          private-key: ${{ steps.app.outputs.key-source == 'secret' && secrets.RELEASE_APP_PRIVATE_KEY || env.RELEASE_APP_PEM }}
 
       # `sign-commits: true` is the whole reason this is not a `git push`: the
       # action writes the commit through the API, and GitHub signs it server-side.

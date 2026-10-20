@@ -21,3 +21,4 @@ This log holds decisions about **this repository**: what a body may assume, what
 | [ADR-0009](/adr/0009-write-a-body-before-its-second-caller)                            | Write a body before its second caller                            | Accepted | 2026-09-01 |
 | [ADR-0010](/adr/0010-allow-callers-to-own-the-aggregate-gate)                          | Allow callers to own the aggregate gate                          | Accepted | 2026-10-12 |
 | [ADR-0011](/adr/0011-accept-the-release-app-pem-as-a-secret-where-bitwarden-is-absent) | Accept the Release App PEM as a secret where Bitwarden is absent | Accepted | 2026-10-20 |
+| [ADR-0012](/adr/0012-extend-the-pem-secret-to-the-queue-and-regenerated-pr-bodies)     | Extend the PEM secret to the queue and regenerated-PR bodies     | Accepted | 2026-10-20 |
