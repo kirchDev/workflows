@@ -186,7 +186,7 @@ Omit `languages` for the default `["actions", "javascript-typescript"]`. Adding 
 
 ## 🏷️ Releases
 
-`_release-please.yml` opens the release PR and cuts the tag under the kirchDev Release App. **Publishing is a separate body per target**, composed by the caller — because 10 of the 22 repos publish nothing at all, and npm and GoReleaser need different secrets:
+`_release-please.yml` opens the release PR and cuts the tag under the owner's Release App — the kirchDev Release App for `kirchDev` and `TitusKirch`, the Kirch & Ostendorf Release App for `sirargonNet` and `kirch-ostendorf`. **Publishing is a separate body per target**, composed by the caller — because 10 of the 22 repos publish nothing at all, and npm and GoReleaser need different secrets:
 
 ```yaml
 jobs:
@@ -207,6 +207,14 @@ jobs:
     secrets:
       NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
 ```
+
+> [!IMPORTANT]
+> `sirargonNet` and `kirch-ostendorf` have no Bitwarden access in CI, so their callers pass the Kirch & Ostendorf Release App's PEM directly and skip `BWS_ACCESS_TOKEN`. The body then never touches Bitwarden, and fails with an error if the secret is missing or empty ([ADR-0011](docs/99.adr/0011-accept-the-release-app-pem-as-a-secret-where-bitwarden-is-absent.md)):
+>
+> ```yaml
+>     secrets:
+>       RELEASE_APP_PRIVATE_KEY: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+> ```
 
 <details>
 <summary>Which publish body a repo composes on, and the prerelease fix</summary>
