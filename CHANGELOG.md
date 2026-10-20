@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.17.0](https://github.com/kirchDev/workflows/compare/v0.16.0...v0.17.0) (2026-10-20)
+
+
+### Features
+
+* **ci-rust:** accept an explicit toolchain input ([#75](https://github.com/kirchDev/workflows/issues/75)) ([045efc0](https://github.com/kirchDev/workflows/commit/045efc0ee651fc1a3c0891f42124b3c6777b9280))
+
 ## [0.16.0](https://github.com/kirchDev/workflows/compare/v0.15.0...v0.16.0) (2026-10-20)
 
 
