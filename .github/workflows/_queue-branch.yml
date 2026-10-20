@@ -4,7 +4,8 @@ name: Queue Branch (reusable)
 
 # Reusable body. The caller carries the `pull_request` trigger — including the
 # `branches:` filter that names its integration branch — and passes nothing but
-# the Bitwarden token. See README → Queue landing for the stub.
+# the Queue App key's secret (the Bitwarden token, or the PEM itself where
+# Bitwarden is absent). See README → Queue landing for the stub.
 #
 # Cuts the queue branch a worktree drain's pull requests are grouped behind, and
 # retargets each worker PR at it. This is the step the drain deliberately cannot
@@ -34,9 +35,16 @@ on:
         type: string
         default: ubuntu-latest
     secrets:
+      # Both optional, but one of them must be set — the resolve step below
+      # fails with an error naming which one, instead of minting with no key.
       BWS_ACCESS_TOKEN:
         description: Bitwarden Secrets Manager access token — opens the Queue App PEM.
-        required: true
+        required: false
+      QUEUE_APP_PRIVATE_KEY:
+        description: >-
+          The Queue App's PEM, for owners whose CI has no Bitwarden access.
+          When set, Bitwarden is skipped.
+        required: false
 
 # Shared with _fast-forward-queue.yml, not merely with other runs of this file.
 # Cutting a branch and landing one must never interleave: a branch cut from an
@@ -121,30 +129,74 @@ jobs:
           echo "sha=$tip" >> "$GITHUB_OUTPUT"
           echo "create=true" >> "$GITHUB_OUTPUT"
 
-      # Same runtime-from-Bitwarden pattern as _fast-forward-queue.yml; the PEM is
-      # never a GitHub secret. BWS_ACCESS_TOKEN is org-level on kirchDev and a repo
+      # Same runtime-from-Bitwarden pattern as _fast-forward-queue.yml, and the
+      # same owner table. BWS_ACCESS_TOKEN is org-level on kirchDev and a repo
       # secret on the TitusKirch account.
       #
       # DERIVED, not configured: each owner authenticates as a different machine
       # account and reads only its own `-ci` mirror, so the id follows the owner.
       # Carrying it as a literal is what left four repos pointing at an entry
       # their token cannot open — silently, until someone dispatched the run.
-      - name: Fetch Queue App PEM from Bitwarden
+      #
+      # sirargonNet and kirch-ostendorf run under the Kirch & Ostendorf Queue
+      # App and have no Bitwarden access in CI, so their callers pass the PEM as
+      # QUEUE_APP_PRIVATE_KEY (ADR-0012). A set key always wins over Bitwarden.
+      - name: Resolve the Queue App for this owner
+        id: app
         if: steps.existing.outputs.create == 'true'
+        env:
+          OWNER: ${{ github.repository_owner }}
+          HAS_KEY: ${{ secrets.QUEUE_APP_PRIVATE_KEY != '' }}
+          HAS_BWS: ${{ secrets.BWS_ACCESS_TOKEN != '' }}
+        run: |
+          set -euo pipefail
+          pem_id=''
+          case "$OWNER" in
+            kirchDev)
+              client_id='Iv23liFEghQzTBNzJmMC'
+              pem_id='df8b447a-ffd5-4009-9cc3-b49b014f6978'
+              ;;
+            sirargonNet | kirch-ostendorf)
+              client_id='Iv23lioZSnh6q5mPAE6O'
+              ;;
+            *)
+              client_id='Iv23liFEghQzTBNzJmMC'
+              pem_id='7e77b6cb-0661-40f6-a10e-b49b014f6985'
+              ;;
+          esac
+
+          if [ "$HAS_KEY" = 'true' ]; then
+            source='secret'
+          elif [ -z "$pem_id" ]; then
+            echo "::error::$OWNER has no Queue App PEM in Bitwarden — pass it as the QUEUE_APP_PRIVATE_KEY secret."
+            exit 1
+          elif [ "$HAS_BWS" != 'true' ]; then
+            echo "::error::Neither QUEUE_APP_PRIVATE_KEY nor BWS_ACCESS_TOKEN is set (or one is empty) — the Queue App key cannot be read."
+            exit 1
+          else
+            source='bitwarden'
+          fi
+
+          echo "client-id=$client_id" >> "$GITHUB_OUTPUT"
+          echo "pem-id=$pem_id" >> "$GITHUB_OUTPUT"
+          echo "key-source=$source" >> "$GITHUB_OUTPUT"
+
+      - name: Fetch Queue App PEM from Bitwarden
+        if: steps.app.outputs.key-source == 'bitwarden'
         uses: bitwarden/sm-action@1238aae8fc64b212641190a9227c8a734ab1a793 # v3.0.1
         with:
           access_token: ${{ secrets.BWS_ACCESS_TOKEN }}
           cloud_region: eu
           secrets: |
-            ${{ github.repository_owner == 'kirchDev' && 'df8b447a-ffd5-4009-9cc3-b49b014f6978' || '7e77b6cb-0661-40f6-a10e-b49b014f6985' }} > KIRCHDEV_QUEUE_APP_PEM
+            ${{ steps.app.outputs.pem-id }} > QUEUE_APP_PEM
 
       - name: Mint Queue App token
         id: app-token
         if: steps.existing.outputs.create == 'true'
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         with:
-          app-id: '4473889'
-          private-key: ${{ env.KIRCHDEV_QUEUE_APP_PEM }}
+          client-id: ${{ steps.app.outputs.client-id }}
+          private-key: ${{ steps.app.outputs.key-source == 'secret' && secrets.QUEUE_APP_PRIVATE_KEY || env.QUEUE_APP_PEM }}
 
       # THE APP TOKEN IS WHAT MAKES THE NEXT WORKFLOW FIRE, and that is the whole
       # reason it is minted here rather than pushing the ref with the workflow
