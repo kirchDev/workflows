@@ -7,7 +7,7 @@ name: Release Please (reusable)
 # npm, Packagist, GoReleaser — which stays in the repo that owns the artifact.
 # See README → Releases for the stub.
 #
-# Runs under the kirchDev Release App rather than GITHUB_TOKEN: a release PR
+# Runs under the owner's Release App rather than GITHUB_TOKEN: a release PR
 # opened by the workflow token raises no `pull_request` event, so nothing would
 # run CI on it.
 on:
@@ -40,9 +40,16 @@ on:
         type: boolean
         default: false
     secrets:
+      # Both optional, but one of them must be set — the resolve step below
+      # fails with an error naming which one, instead of minting with no key.
       BWS_ACCESS_TOKEN:
         description: Bitwarden Secrets Manager access token — opens the Release App PEM.
-        required: true
+        required: false
+      RELEASE_APP_PRIVATE_KEY:
+        description: >-
+          The Release App's PEM, for owners whose CI has no Bitwarden access.
+          When set, Bitwarden is skipped.
+        required: false
     outputs:
       release-created:
         description: '"true" when this run cut a release — gate any publishing job on it.'
@@ -83,20 +90,71 @@ jobs:
       # Measured across the estate, two kirchDev repos carried the TitusKirch id
       # — the same silent misconfiguration the Queue App had, in a second place
       # nobody had looked. Deriving it makes that class of error impossible.
+      #
+      # The app follows the owner too: kirchDev and TitusKirch run under the
+      # kirchDev Release App, sirargonNet and kirch-ostendorf under the
+      # Kirch & Ostendorf Release App (owned by kirch-ostendorf, installed in
+      # both). One table, so an owner can never get one app's id with the
+      # other app's key.
+      #
+      # sirargonNet and kirch-ostendorf have no Bitwarden access in CI (free
+      # plan), so their callers pass the PEM as RELEASE_APP_PRIVATE_KEY and
+      # have no vault id here (ADR-0011). A set key always wins over Bitwarden.
+      # Secrets cannot appear in `if:`, so only whether each is set leaves here.
+      - name: Resolve the Release App for this owner
+        id: app
+        env:
+          OWNER: ${{ github.repository_owner }}
+          HAS_KEY: ${{ secrets.RELEASE_APP_PRIVATE_KEY != '' }}
+          HAS_BWS: ${{ secrets.BWS_ACCESS_TOKEN != '' }}
+        run: |
+          set -euo pipefail
+          pem_id=''
+          case "$OWNER" in
+            kirchDev)
+              client_id='Iv23li3hNqtsZ8fDlwqH'
+              pem_id='3a3459f0-c986-4ff3-a36b-b4550012d41e'
+              ;;
+            sirargonNet | kirch-ostendorf)
+              client_id='Iv23limtBZRLTqgEo3hn'
+              ;;
+            *)
+              client_id='Iv23li3hNqtsZ8fDlwqH'
+              pem_id='29f8317d-29f7-46af-834b-b4550012d477'
+              ;;
+          esac
+
+          if [ "$HAS_KEY" = 'true' ]; then
+            source='secret'
+          elif [ -z "$pem_id" ]; then
+            echo "::error::$OWNER has no Release App PEM in Bitwarden — pass it as the RELEASE_APP_PRIVATE_KEY secret."
+            exit 1
+          elif [ "$HAS_BWS" != 'true' ]; then
+            echo "::error::Neither RELEASE_APP_PRIVATE_KEY nor BWS_ACCESS_TOKEN is set (or one is empty) — the Release App key cannot be read."
+            exit 1
+          else
+            source='bitwarden'
+          fi
+
+          echo "client-id=$client_id" >> "$GITHUB_OUTPUT"
+          echo "pem-id=$pem_id" >> "$GITHUB_OUTPUT"
+          echo "key-source=$source" >> "$GITHUB_OUTPUT"
+
       - name: Fetch Release App PEM from Bitwarden
+        if: steps.app.outputs.key-source == 'bitwarden'
         uses: bitwarden/sm-action@1238aae8fc64b212641190a9227c8a734ab1a793 # v3.0.1
         with:
           access_token: ${{ secrets.BWS_ACCESS_TOKEN }}
           cloud_region: eu
           secrets: |
-            ${{ github.repository_owner == 'kirchDev' && '3a3459f0-c986-4ff3-a36b-b4550012d41e' || '29f8317d-29f7-46af-834b-b4550012d477' }} > KIRCHDEV_RELEASE_APP_PEM
+            ${{ steps.app.outputs.pem-id }} > RELEASE_APP_PEM
 
       - name: Mint Release App token
         id: app-token
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         with:
-          client-id: 'Iv23li3hNqtsZ8fDlwqH'
-          private-key: ${{ env.KIRCHDEV_RELEASE_APP_PEM }}
+          client-id: ${{ steps.app.outputs.client-id }}
+          private-key: ${{ steps.app.outputs.key-source == 'secret' && secrets.RELEASE_APP_PRIVATE_KEY || env.RELEASE_APP_PEM }}
 
       - id: release
         uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
