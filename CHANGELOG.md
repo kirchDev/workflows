@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.15.0](https://github.com/kirchDev/workflows/compare/v0.14.1...v0.15.0) (2026-10-20)
+
+
+### Features
+
+* **release-please:** pick the release app by owner ([#70](https://github.com/kirchDev/workflows/issues/70)) ([2a6d8f4](https://github.com/kirchDev/workflows/commit/2a6d8f44929747651bf551c5cf5249da221a7009))
+
 ## [0.14.1](https://github.com/kirchDev/workflows/compare/v0.14.0...v0.14.1) (2026-10-12)
 
 
