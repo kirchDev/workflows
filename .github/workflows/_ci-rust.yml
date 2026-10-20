@@ -53,6 +53,14 @@ on:
         required: false
         type: string
         default: ''
+      toolchain:
+        description: >-
+          Rust toolchain to install, such as nightly-2026-10-07, set as the
+          working directory's override. Empty reads the channel from the nearest
+          rust-toolchain.toml or rust-toolchain, and without one uses stable.
+        required: false
+        type: string
+        default: ''
       components:
         description: Rust toolchain components.
         required: false
@@ -173,32 +181,74 @@ jobs:
       - name: Detect the repository toolchain
         id: toolchain
         shell: bash
+        env:
+          TOOLCHAIN: ${{ inputs.toolchain }}
         run: |
           set -euo pipefail
+          toolchain=$TOOLCHAIN
+          source=${TOOLCHAIN:+input}
           directory="$PWD"
-          while :; do
-            if [[ -f "$directory/rust-toolchain.toml" || -f "$directory/rust-toolchain" ]]; then
-              echo 'pinned=true' >> "$GITHUB_OUTPUT"
-              exit 0
-            fi
+          while [[ -z "$source" ]]; do
+            for file in "$directory/rust-toolchain" "$directory/rust-toolchain.toml"; do
+              [[ -f "$file" ]] || continue
+              source='file'
+              # TOML names a channel (a `path` toolchain names none); the legacy form is the name itself.
+              if grep -q '=' "$file"; then
+                toolchain=$(sed -nE "s/^[[:space:]]*channel[[:space:]]*=[[:space:]]*[\"']([^\"']+)[\"'].*/\1/p" "$file" | head -n 1)
+              else
+                toolchain=$(tr -d '[:space:]' < "$file")
+              fi
+              break
+            done
             if [[ "$directory" == "$GITHUB_WORKSPACE" || "$directory" == / ]]; then break; fi
             directory=$(dirname "$directory")
           done
-          echo 'pinned=false' >> "$GITHUB_OUTPUT"
+          if [[ ! "$toolchain" =~ ^[A-Za-z0-9._-]*$ ]]; then
+            echo '::error::Invalid Rust toolchain name.'
+            exit 1
+          fi
+          echo "source=$source" >> "$GITHUB_OUTPUT"
+          echo "toolchain=$toolchain" >> "$GITHUB_OUTPUT"
 
+      # A slim runner image (actions-runner) carries no rustup. Failing here beats
+      # a pinned rustup-init: one checksum per platform to maintain, while Ubuntu
+      # already packages it for `system-dependencies: rustup`.
       - name: Install the repository toolchain
-        if: steps.toolchain.outputs.pinned == 'true'
+        if: steps.toolchain.outputs.source != ''
         shell: bash
         env:
+          SOURCE: ${{ steps.toolchain.outputs.source }}
+          TOOLCHAIN: ${{ steps.toolchain.outputs.toolchain }}
           COMPONENTS: ${{ inputs.components }}
         run: |
           set -euo pipefail
-          rustup toolchain install --no-self-update
+          if ! command -v rustup > /dev/null; then
+            echo '::error::rustup is missing on this runner. Add it to the image, or pass `system-dependencies: rustup` on Ubuntu.'
+            exit 1
+          fi
+          modern=false
+          if [[ "$(rustup --version 2> /dev/null)" =~ ([0-9]+)\.([0-9]+) ]] &&
+            (( BASH_REMATCH[1] > 1 || BASH_REMATCH[2] >= 28 )); then modern=true; fi
+          # rustup 1.28+ installs a pin file with its own components and targets, as before.
+          if [[ "$SOURCE" == file && "$modern" == true ]]; then
+            rustup toolchain install --no-self-update
+          elif [[ -n "$TOOLCHAIN" ]]; then
+            rustup toolchain install "$TOOLCHAIN" --profile minimal --no-self-update
+          else
+            echo '::error::This rustup cannot install a pin file without a channel; pass the toolchain input.'
+            exit 1
+          fi
+          add=(rustup component add)
+          if [[ -n "$TOOLCHAIN" ]]; then add+=(--toolchain "$TOOLCHAIN"); fi
           read -r -a components <<< "${COMPONENTS//,/ }"
-          if (( ${#components[@]} )); then rustup component add "${components[@]}"; fi
+          if (( ${#components[@]} )); then "${add[@]}" "${components[@]}"; fi
+          if [[ "$SOURCE" == input ]]; then rustup override set "$TOOLCHAIN"; fi
+          # rust-cache asks rustc at the checkout root, where a slim runner has no default.
+          installed=$(rustup toolchain list)
+          if [[ -n "$TOOLCHAIN" && "$installed" != *'default)'* ]]; then rustup default "$TOOLCHAIN"; fi
 
       - name: Set up Rust
-        if: steps.toolchain.outputs.pinned != 'true'
+        if: steps.toolchain.outputs.source == ''
         uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
         with:
           components: ${{ inputs.components }}
