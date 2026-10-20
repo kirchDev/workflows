@@ -49,7 +49,12 @@ on:
     secrets:
       BWS_ACCESS_TOKEN:
         description: Bitwarden Secrets Manager access token — opens the Queue App PEM.
-        required: true
+        required: false
+      QUEUE_APP_PRIVATE_KEY:
+        description: >-
+          The Queue App's PEM, for owners whose CI has no Bitwarden access.
+          When set, Bitwarden is skipped. One of the two must be set.
+        required: false
 
 # One fast-forward at a time. Two concurrent runs would race on the same ref and
 # the loser's update would stop being a fast-forward mid-flight.
@@ -87,7 +92,59 @@ jobs:
       contents: read
     outputs:
       integration-branch: ${{ steps.topology.outputs.branch }}
+      app-client-id: ${{ steps.app.outputs.client-id }}
+      app-pem-id: ${{ steps.app.outputs.pem-id }}
+      app-key-source: ${{ steps.app.outputs.key-source }}
+      app-key-error: ${{ steps.app.outputs.key-error }}
     steps:
+      # The Queue App follows the owner: kirchDev and TitusKirch run under the
+      # kirchDev Queue App, sirargonNet and kirch-ostendorf under the
+      # Kirch & Ostendorf Queue App, whose callers pass the PEM as
+      # QUEUE_APP_PRIVATE_KEY because their CI has no Bitwarden (ADR-0012).
+      # One table for all three jobs, so no job can pair one app's id with the
+      # other's key. It only records a missing key: most runs mint nothing, so
+      # the error is raised in the job that would mint.
+      - name: Resolve the Queue App for this owner
+        id: app
+        env:
+          OWNER: ${{ github.repository_owner }}
+          HAS_KEY: ${{ secrets.QUEUE_APP_PRIVATE_KEY != '' }}
+          HAS_BWS: ${{ secrets.BWS_ACCESS_TOKEN != '' }}
+        run: |
+          set -euo pipefail
+          pem_id=''
+          error=''
+          case "$OWNER" in
+            kirchDev)
+              client_id='Iv23liFEghQzTBNzJmMC'
+              pem_id='df8b447a-ffd5-4009-9cc3-b49b014f6978'
+              ;;
+            sirargonNet | kirch-ostendorf)
+              client_id='Iv23lioZSnh6q5mPAE6O'
+              ;;
+            *)
+              client_id='Iv23liFEghQzTBNzJmMC'
+              pem_id='7e77b6cb-0661-40f6-a10e-b49b014f6985'
+              ;;
+          esac
+
+          if [ "$HAS_KEY" = 'true' ]; then
+            source='secret'
+          elif [ -z "$pem_id" ]; then
+            source=''
+            error="$OWNER has no Queue App PEM in Bitwarden — pass it as the QUEUE_APP_PRIVATE_KEY secret."
+          elif [ "$HAS_BWS" != 'true' ]; then
+            source=''
+            error='Neither QUEUE_APP_PRIVATE_KEY nor BWS_ACCESS_TOKEN is set (or one is empty) — the Queue App key cannot be read.'
+          else
+            source='bitwarden'
+          fi
+
+          echo "client-id=$client_id" >> "$GITHUB_OUTPUT"
+          echo "pem-id=$pem_id" >> "$GITHUB_OUTPUT"
+          echo "key-source=$source" >> "$GITHUB_OUTPUT"
+          echo "key-error=$error" >> "$GITHUB_OUTPUT"
+
       - name: Resolve the integration branch
         id: topology
         env:
@@ -143,29 +200,37 @@ jobs:
             echo "create=true" >> "$GITHUB_OUTPUT"
           fi
 
-      # Same runtime-from-Bitwarden pattern as the landing job below; the PEM is
-      # never a GitHub secret.
+      # Same runtime-from-Bitwarden pattern as the landing job below, on the
+      # owner's app and key as `resolve` chose them.
       #
       # DERIVED, not configured: each owner authenticates as a different machine
       # account and reads only its own `-ci` mirror, so the id follows the owner.
       # Carrying it as a literal is what left four repos pointing at an entry
       # their token cannot open — silently, until someone dispatched the run.
+      - name: Check the Queue App key
+        if: steps.existing.outputs.create == 'true' && needs.resolve.outputs.app-key-source == ''
+        env:
+          KEY_ERROR: ${{ needs.resolve.outputs.app-key-error }}
+        run: |
+          echo "::error::$KEY_ERROR"
+          exit 1
+
       - name: Fetch Queue App PEM from Bitwarden
-        if: steps.existing.outputs.create == 'true'
+        if: steps.existing.outputs.create == 'true' && needs.resolve.outputs.app-key-source == 'bitwarden'
         uses: bitwarden/sm-action@1238aae8fc64b212641190a9227c8a734ab1a793 # v3.0.1
         with:
           access_token: ${{ secrets.BWS_ACCESS_TOKEN }}
           cloud_region: eu
           secrets: |
-            ${{ github.repository_owner == 'kirchDev' && 'df8b447a-ffd5-4009-9cc3-b49b014f6978' || '7e77b6cb-0661-40f6-a10e-b49b014f6985' }} > KIRCHDEV_QUEUE_APP_PEM
+            ${{ needs.resolve.outputs.app-pem-id }} > QUEUE_APP_PEM
 
       - name: Mint Queue App token
         id: app-token
         if: steps.existing.outputs.create == 'true'
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         with:
-          app-id: '4473889'
-          private-key: ${{ env.KIRCHDEV_QUEUE_APP_PEM }}
+          client-id: ${{ needs.resolve.outputs.app-client-id }}
+          private-key: ${{ needs.resolve.outputs.app-key-source == 'secret' && secrets.QUEUE_APP_PRIVATE_KEY || env.QUEUE_APP_PEM }}
 
       # Opened READY, not draft: ci.yml skips draft PRs, and `pick` skips them
       # too, so a draft queue PR would be a PR nothing ever runs on and nothing
@@ -382,7 +447,7 @@ jobs:
     env:
       INTEGRATION_BRANCH: ${{ needs.resolve.outputs.integration-branch }}
     steps:
-      # The PEM is never a GitHub secret — same runtime-from-Bitwarden pattern as
+      # Where Bitwarden exists the PEM is never a GitHub secret — same pattern as
       # release-please.yml. Unlike that one this uses the purpose-built "kirchDev
       # Queue" App, which carries `contents: write` plus `pull_requests: write`
       # (ADR-0010 in kirchDev/infrastructure, for the `open` job above) and nothing else, and is the
@@ -391,20 +456,31 @@ jobs:
       #
       # BWS_ACCESS_TOKEN is the caller's, passed in by name — never inherited.
       # It is org-level on kirchDev and a repo secret on the TitusKirch account.
+      # sirargonNet and kirch-ostendorf run the Kirch & Ostendorf Queue App,
+      # same permissions, keyed by QUEUE_APP_PRIVATE_KEY instead (ADR-0012).
+      - name: Check the Queue App key
+        if: needs.resolve.outputs.app-key-source == ''
+        env:
+          KEY_ERROR: ${{ needs.resolve.outputs.app-key-error }}
+        run: |
+          echo "::error::$KEY_ERROR"
+          exit 1
+
       - name: Fetch Queue App PEM from Bitwarden
+        if: needs.resolve.outputs.app-key-source == 'bitwarden'
         uses: bitwarden/sm-action@1238aae8fc64b212641190a9227c8a734ab1a793 # v3.0.1
         with:
           access_token: ${{ secrets.BWS_ACCESS_TOKEN }}
           cloud_region: eu
           secrets: |
-            ${{ github.repository_owner == 'kirchDev' && 'df8b447a-ffd5-4009-9cc3-b49b014f6978' || '7e77b6cb-0661-40f6-a10e-b49b014f6985' }} > KIRCHDEV_QUEUE_APP_PEM
+            ${{ needs.resolve.outputs.app-pem-id }} > QUEUE_APP_PEM
 
       - name: Mint Queue App token
         id: app-token
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         with:
-          app-id: '4473889'
-          private-key: ${{ env.KIRCHDEV_QUEUE_APP_PEM }}
+          client-id: ${{ needs.resolve.outputs.app-client-id }}
+          private-key: ${{ needs.resolve.outputs.app-key-source == 'secret' && secrets.QUEUE_APP_PRIVATE_KEY || env.QUEUE_APP_PEM }}
 
       # The App bypasses the merge gates only, so `required_signatures` from the
       # integrity ruleset still binds every commit being fast-forwarded in: one

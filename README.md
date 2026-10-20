@@ -155,6 +155,15 @@ jobs:
 
 </details>
 
+The App follows the owner: `kirchDev` and `TitusKirch` run under the kirchDev Queue App, `sirargonNet` and `kirch-ostendorf` under the Kirch & Ostendorf Queue App — separate from their Release App, because the queue identity is the merge-gate bypass. Those two owners have no Bitwarden in CI, so their stubs pass the PEM instead of `BWS_ACCESS_TOKEN`, and the bodies fail with an error if it is missing or empty ([ADR-0012](docs/99.adr/0012-extend-the-pem-secret-to-the-queue-and-regenerated-pr-bodies.md)):
+
+```yaml
+    secrets:
+      QUEUE_APP_PRIVATE_KEY: ${{ secrets.QUEUE_APP_PRIVATE_KEY }}
+```
+
+`_open-regenerated-pr.yml` opens its PR under the owner's Release App the same way: those two owners pass `RELEASE_APP_PRIVATE_KEY` and may leave out `app-id`.
+
 ## 🔐 Reference policy & secrets
 
 **Callers pin a commit SHA**, with the version as a trailing comment — the same way this repo pins `actions/checkout` and `bitwarden/sm-action`. Moving tags are published and work: every release moves `v<major>` onto itself, so `@v0` follows the newest `v0.x.y` exactly as `actions/checkout@v7` does. The stubs use a SHA anyway, and Dependabot raises the bumps — the alias exists for callers who want the other trade.
