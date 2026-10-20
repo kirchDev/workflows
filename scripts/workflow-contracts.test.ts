@@ -51,7 +51,8 @@ test('repository toolchain is found in the crate or an ancestor without escaping
           env: {
             ...process.env,
             GITHUB_WORKSPACE: repo,
-            GITHUB_OUTPUT: output
+            GITHUB_OUTPUT: output,
+            TOOLCHAIN: ''
           },
           encoding: 'utf8'
         }
@@ -59,10 +60,159 @@ test('repository toolchain is found in the crate or an ancestor without escaping
       assert.equal(run.status, 0, run.stderr);
       assert.equal(
         readFileSync(output, 'utf8').trim(),
-        `pinned=${location !== undefined}`
+        location ? 'source=file\ntoolchain=1.90.0' : 'source=\ntoolchain='
       );
       if (location) rmSync(join(location, 'rust-toolchain.toml'));
     }
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('toolchain input wins, legacy and path pins resolve, and names stay single output lines', () => {
+  const root = mkdtempSync(join(tmpdir(), 'workflow-toolchain-input-'));
+  const output = join(root, 'output');
+  const cases: [string, string | undefined, string | undefined][] = [
+    [
+      'nightly-2026-10-07',
+      '[toolchain]\nchannel = "1.90.0"\n',
+      'source=input\ntoolchain=nightly-2026-10-07'
+    ],
+    ['', 'nightly-2026-10-07\n', 'source=file\ntoolchain=nightly-2026-10-07'],
+    [
+      '',
+      '[toolchain]\nchannel = \'1.91.1\'\ncomponents = ["clippy"]\n',
+      'source=file\ntoolchain=1.91.1'
+    ],
+    ['', '[toolchain]\npath = "/opt/rust"\n', 'source=file\ntoolchain='],
+    ['stable\nEVIL=true', undefined, undefined]
+  ];
+  try {
+    for (const [input, pin, expected] of cases) {
+      writeFileSync(output, '');
+      rmSync(join(root, 'rust-toolchain'), { force: true });
+      if (pin) writeFileSync(join(root, 'rust-toolchain'), pin);
+      const run = spawnSync(
+        'bash',
+        ['-c', script('Detect the repository toolchain')],
+        {
+          cwd: root,
+          env: {
+            ...process.env,
+            GITHUB_WORKSPACE: root,
+            GITHUB_OUTPUT: output,
+            TOOLCHAIN: input
+          },
+          encoding: 'utf8'
+        }
+      );
+      assert.equal(run.status, expected ? 0 : 1, run.stderr);
+      assert.equal(readFileSync(output, 'utf8').trim(), expected ?? '');
+    }
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('toolchain install names the toolchain unless rustup 1.28+ reads the pin file', () => {
+  const root = mkdtempSync(join(tmpdir(), 'workflow-rustup-'));
+  const log = join(root, 'calls');
+  writeFileSync(
+    join(root, 'rustup'),
+    [
+      '#!/bin/sh',
+      'if [ "$1" = --version ]; then echo "rustup $RUSTUP_VERSION (fake)"; exit 0; fi',
+      'echo "$*" >> "$CALLS"',
+      'if [ "$1 $2" = "toolchain list" ]; then echo "$INSTALLED"; fi',
+      'if [ "$1 $2 $3" = "toolchain install --no-self-update" ] && [ "$RUSTUP_VERSION" = 1.26.0 ]; then exit 1; fi',
+      ''
+    ].join('\n'),
+    { mode: 0o755 }
+  );
+  const install = (env: Record<string, string>) => {
+    writeFileSync(log, '');
+    const run = spawnSync(
+      'bash',
+      ['-c', script('Install the repository toolchain')],
+      {
+        env: {
+          ...process.env,
+          PATH: `${root}:${process.env.PATH}`,
+          CALLS: log,
+          COMPONENTS: 'rustfmt, clippy',
+          INSTALLED: 'stable-x86_64-unknown-linux-gnu (default)',
+          ...env
+        },
+        encoding: 'utf8'
+      }
+    );
+    return {
+      status: run.status,
+      stderr: run.stderr,
+      calls: readFileSync(log, 'utf8').trim().split('\n')
+    };
+  };
+  try {
+    const tc = 'nightly-2026-10-07';
+    for (const version of ['1.26.0', '1.28.2']) {
+      const run = install({
+        RUSTUP_VERSION: version,
+        SOURCE: 'input',
+        TOOLCHAIN: tc,
+        INSTALLED: ''
+      });
+      assert.equal(run.status, 0, run.stderr);
+      assert.deepEqual(run.calls, [
+        `toolchain install ${tc} --profile minimal --no-self-update`,
+        `component add --toolchain ${tc} rustfmt clippy`,
+        `override set ${tc}`,
+        'toolchain list',
+        `default ${tc}`
+      ]);
+    }
+    const legacy = install({
+      RUSTUP_VERSION: '1.26.0',
+      SOURCE: 'file',
+      TOOLCHAIN: tc
+    });
+    assert.equal(legacy.status, 0, legacy.stderr);
+    assert.deepEqual(legacy.calls, [
+      `toolchain install ${tc} --profile minimal --no-self-update`,
+      `component add --toolchain ${tc} rustfmt clippy`,
+      'toolchain list'
+    ]);
+    const modern = install({
+      RUSTUP_VERSION: '1.28.2',
+      SOURCE: 'file',
+      TOOLCHAIN: ''
+    });
+    assert.equal(modern.status, 0, modern.stderr);
+    assert.deepEqual(modern.calls, [
+      'toolchain install --no-self-update',
+      'component add rustfmt clippy',
+      'toolchain list'
+    ]);
+    const unnamed = install({
+      RUSTUP_VERSION: '1.26.0',
+      SOURCE: 'file',
+      TOOLCHAIN: ''
+    });
+    assert.equal(unnamed.status, 1);
+    const missing = spawnSync(
+      '/bin/bash',
+      ['-c', script('Install the repository toolchain')],
+      {
+        env: {
+          PATH: '/nonexistent',
+          SOURCE: 'input',
+          TOOLCHAIN: tc,
+          COMPONENTS: ''
+        },
+        encoding: 'utf8'
+      }
+    );
+    assert.equal(missing.status, 1);
+    assert.match(missing.stdout, /::error::rustup is missing/u);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
