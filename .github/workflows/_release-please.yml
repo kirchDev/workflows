@@ -7,7 +7,7 @@ name: Release Please (reusable)
 # npm, Packagist, GoReleaser — which stays in the repo that owns the artifact.
 # See README → Releases for the stub.
 #
-# Runs under the kirchDev Release App rather than GITHUB_TOKEN: a release PR
+# Runs under the owner's Release App rather than GITHUB_TOKEN: a release PR
 # opened by the workflow token raises no `pull_request` event, so nothing would
 # run CI on it.
 on:
@@ -83,20 +83,49 @@ jobs:
       # Measured across the estate, two kirchDev repos carried the TitusKirch id
       # — the same silent misconfiguration the Queue App had, in a second place
       # nobody had looked. Deriving it makes that class of error impossible.
+      #
+      # The app follows the owner too: kirchDev and TitusKirch run under the
+      # kirchDev Release App, sirargonNet and kirch-ostendorf under the
+      # Kirch & Ostendorf Release App (owned by kirch-ostendorf, installed in
+      # both). One table, so an owner can never get one app's id with the
+      # other app's key.
+      - name: Resolve the Release App for this owner
+        id: app
+        env:
+          OWNER: ${{ github.repository_owner }}
+        run: |
+          set -euo pipefail
+          case "$OWNER" in
+            kirchDev)
+              client_id='Iv23li3hNqtsZ8fDlwqH'
+              pem_id='3a3459f0-c986-4ff3-a36b-b4550012d41e'
+              ;;
+            sirargonNet | kirch-ostendorf)
+              client_id='Iv23limtBZRLTqgEo3hn'
+              pem_id='2fe6d9c5-f960-40bd-a646-b4e900207ab5'
+              ;;
+            *)
+              client_id='Iv23li3hNqtsZ8fDlwqH'
+              pem_id='29f8317d-29f7-46af-834b-b4550012d477'
+              ;;
+          esac
+          echo "client-id=$client_id" >> "$GITHUB_OUTPUT"
+          echo "pem-id=$pem_id" >> "$GITHUB_OUTPUT"
+
       - name: Fetch Release App PEM from Bitwarden
         uses: bitwarden/sm-action@1238aae8fc64b212641190a9227c8a734ab1a793 # v3.0.1
         with:
           access_token: ${{ secrets.BWS_ACCESS_TOKEN }}
           cloud_region: eu
           secrets: |
-            ${{ github.repository_owner == 'kirchDev' && '3a3459f0-c986-4ff3-a36b-b4550012d41e' || '29f8317d-29f7-46af-834b-b4550012d477' }} > KIRCHDEV_RELEASE_APP_PEM
+            ${{ steps.app.outputs.pem-id }} > RELEASE_APP_PEM
 
       - name: Mint Release App token
         id: app-token
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         with:
-          client-id: 'Iv23li3hNqtsZ8fDlwqH'
-          private-key: ${{ env.KIRCHDEV_RELEASE_APP_PEM }}
+          client-id: ${{ steps.app.outputs.client-id }}
+          private-key: ${{ env.RELEASE_APP_PEM }}
 
       - id: release
         uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0

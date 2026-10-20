@@ -186,7 +186,7 @@ Omit `languages` for the default `["actions", "javascript-typescript"]`. Adding 
 
 ## 🏷️ Releases
 
-`_release-please.yml` opens the release PR and cuts the tag under the kirchDev Release App. **Publishing is a separate body per target**, composed by the caller — because 10 of the 22 repos publish nothing at all, and npm and GoReleaser need different secrets:
+`_release-please.yml` opens the release PR and cuts the tag under the owner's Release App — the kirchDev Release App for `kirchDev` and `TitusKirch`, the Kirch & Ostendorf Release App for `sirargonNet` and `kirch-ostendorf`. **Publishing is a separate body per target**, composed by the caller — because 10 of the 22 repos publish nothing at all, and npm and GoReleaser need different secrets:
 
 ```yaml
 jobs:
