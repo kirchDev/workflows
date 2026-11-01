@@ -227,7 +227,7 @@ jobs:
       - name: Mint Queue App token
         id: app-token
         if: steps.existing.outputs.create == 'true'
-        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
         with:
           client-id: ${{ needs.resolve.outputs.app-client-id }}
           private-key: ${{ needs.resolve.outputs.app-key-source == 'secret' && secrets.QUEUE_APP_PRIVATE_KEY || env.QUEUE_APP_PEM }}
@@ -477,7 +477,7 @@ jobs:
 
       - name: Mint Queue App token
         id: app-token
-        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
         with:
           client-id: ${{ needs.resolve.outputs.app-client-id }}
           private-key: ${{ needs.resolve.outputs.app-key-source == 'secret' && secrets.QUEUE_APP_PRIVATE_KEY || env.QUEUE_APP_PEM }}
