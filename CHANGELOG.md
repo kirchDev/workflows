@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.18.0](https://github.com/kirchDev/workflows/compare/v0.17.0...v0.18.0) (2026-11-02)
+
+
+### Features
+
+* **detect-changes:** decide areas by content fingerprint ([#82](https://github.com/kirchDev/workflows/issues/82)) ([6be1d10](https://github.com/kirchDev/workflows/commit/6be1d10140a590eb91b15e00e2098357d43be07c))
+
 ## [0.17.0](https://github.com/kirchDev/workflows/compare/v0.16.0...v0.17.0) (2026-10-20)
 
 
