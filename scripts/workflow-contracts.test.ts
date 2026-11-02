@@ -372,7 +372,18 @@ const AREA_FILTERS = [
 ].join('\n');
 
 function git(cwd: string, ...args: string[]): string {
-  const run = spawnSync('git', args, { cwd, encoding: 'utf8' });
+  const run = spawnSync('git', args, {
+    cwd,
+    encoding: 'utf8',
+    env: {
+      ...process.env,
+      GIT_AUTHOR_NAME: 't',
+      GIT_AUTHOR_EMAIL: 't@t',
+      GIT_COMMITTER_NAME: 't',
+      GIT_COMMITTER_EMAIL: 't@t',
+      GIT_CONFIG_GLOBAL: '/dev/null'
+    }
+  });
   assert.equal(run.status, 0, run.stderr);
   return run.stdout.trim();
 }
