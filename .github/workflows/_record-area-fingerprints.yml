@@ -1,0 +1,115 @@
+# yaml-language-server: $schema=https://json.schemastore.org/github-workflow.json
+
+name: Record Area Fingerprints (reusable)
+
+# The other half of `_detect-changes.yml` with `fingerprint: true`. The caller
+# runs it after its Gate went green and hands over the `fingerprints` output;
+# each named area becomes a `ci-area/<name>` commit status whose description is
+# the fingerprint, which is what the next lookup matches on.
+#
+# A COMMIT STATUS, NOT `actions/cache` OR A FILE. The cache expires after seven
+# days and is branch-scoped; a file is one more thing parallel runs overwrite.
+# A status is per commit and per context, so two runs writing the same area at
+# once write the same answer.
+#
+# THE STATUS IS A CLAIM ABOUT WHAT PASSED, so the caller decides what it covers
+# through `areas`. Record an area only when every job gated on it ran green or
+# was skipped because `_detect-changes.yml` reported it as already verified —
+# never when it was skipped for any other reason (a draft, a release-only PR, a
+# job-level `if:`). Recording the verified areas again is deliberate: it carries
+# their fingerprint onto this commit, so the lookup window never loses it.
+on:
+  workflow_call:
+    inputs:
+      runner:
+        description: >-
+          Runner label for this body's jobs. THE ONE THING A BODY CANNOT DERIVE:
+          nothing in a repository states which fleet it belongs to, and the three
+          repos that run on Blacksmith chose that deliberately rather than
+          inheriting it. Default keeps every other caller on GitHub-hosted.
+        required: false
+        type: string
+        default: ubuntu-latest
+      fingerprints:
+        description: The `fingerprints` output of _detect-changes.yml.
+        required: true
+        type: string
+      areas:
+        description: >-
+          JSON array of the area names this run proved green, or `*` for every
+          area in `fingerprints`. Names without a fingerprint are ignored.
+        required: true
+        type: string
+
+jobs:
+  record:
+    name: Record Green Areas
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 5
+    permissions:
+      statuses: write
+    steps:
+      # On a pull request the status goes onto the HEAD commit, not the merge
+      # commit the fingerprint was computed from: the merge commit belongs to no
+      # history the lookup walks, the head commit does. The fingerprint itself
+      # still names the merged tree, so it is the content that matches, never
+      # the commit carrying it.
+      - name: Mark the green areas on this commit
+        env:
+          TOKEN: ${{ github.token }}
+          API_URL: ${{ github.api_url }}
+          REPOSITORY: ${{ github.repository }}
+          SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          FINGERPRINTS: ${{ inputs.fingerprints }}
+          AREAS: ${{ inputs.areas }}
+        run: |
+          set -euo pipefail
+
+          # A fork's token is read-only. Failing here would turn a green pull
+          # request red for a record that costs, at worst, one redundant run.
+          if [ "$HEAD_REPOSITORY" != "$REPOSITORY" ]; then
+            echo "::notice::Pull request from a fork — its token cannot write statuses, nothing recorded."
+            exit 0
+          fi
+
+          if ! jq -e 'type == "object"' <<< "${FINGERPRINTS:-null}" > /dev/null 2>&1; then
+            echo "::notice::No fingerprints — _detect-changes.yml failed open or ran without fingerprint, nothing to record."
+            exit 0
+          fi
+          if [ "$AREAS" != '*' ] && ! jq -e 'type == "array" and all(.[]; type == "string")' <<< "$AREAS" > /dev/null 2>&1; then
+            echo "::error::'areas' must be a JSON array of area names or '*', got: $AREAS"
+            exit 1
+          fi
+
+          pairs=$(jq -r --arg areas "$AREAS" '
+            . as $fps
+            | (if $areas == "*" then keys_unsorted else ($areas | fromjson) end)
+            | .[] | select($fps[.] != null) | "\(.)\t\($fps[.])"' <<< "$FINGERPRINTS")
+
+          if [ -z "$pairs" ]; then
+            echo "::notice::None of the named areas has a fingerprint, nothing to record."
+            exit 0
+          fi
+
+          failed=0
+          while IFS=$'\t' read -r name fingerprint; do
+            if ! [[ "$name" =~ ^[A-Za-z0-9_-]+$ && "$fingerprint" =~ ^[0-9a-f]{64}$ ]]; then
+              echo "::error::Refusing to record '$name' with fingerprint '$fingerprint'."
+              failed=1
+              continue
+            fi
+            if jq -nc --arg context "ci-area/$name" --arg fingerprint "$fingerprint" --arg url "$RUN_URL" \
+              '{state: "success", context: $context, description: $fingerprint, target_url: $url}' \
+              | curl -fsS --max-time 30 -o /dev/null -X POST \
+                -H "Authorization: Bearer $TOKEN" -H 'Accept: application/vnd.github+json' \
+                --data @- "$API_URL/repos/$REPOSITORY/statuses/$SHA"
+            then
+              echo "::notice::Recorded ci-area/$name as green for $fingerprint."
+            else
+              echo "::error::Could not record ci-area/$name — grant 'statuses: write' to the calling job."
+              failed=1
+            fi
+          done <<< "$pairs"
+          exit "$failed"

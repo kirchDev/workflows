@@ -9,6 +9,14 @@ name: Detect Changes (reusable)
 #
 # Pairs with _verified.yml rather than competing with it: the marker skips a run
 # whose bytes already passed, this one skips jobs the change cannot affect.
+#
+# `fingerprint: true` swaps the diff for a per-area content check. Each filter
+# gets a fingerprint over the blobs its patterns match in the tree under test,
+# and an area runs unless a green run already recorded exactly that fingerprint
+# as a `ci-area/<name>` commit status (written by _record-area-fingerprints.yml).
+# Not a diff against the previous run: a red or cancelled predecessor does not
+# count, and a revert, a retry, a release PR or the push that follows a merged
+# PR all land on a fingerprint that already passed.
 on:
   workflow_call:
     inputs:
@@ -32,14 +40,35 @@ on:
         required: false
         type: boolean
         default: false
+      fingerprint:
+        description: >-
+          Decide per area by content fingerprint instead of the diff: an area is
+          skipped only when a green run already recorded its exact fingerprint.
+          Needs `contents: read` and `statuses: read` on the calling job (without
+          the latter every area runs) and `pull-requests: read` for a squash merge
+          to find what its PR recorded. Pair with _record-area-fingerprints.yml.
+        required: false
+        type: boolean
+        default: false
     outputs:
       changes:
         description: JSON array of the filter names that matched. Gate with `contains(fromJSON(...), 'php')`.
-        value: ${{ jobs.detect.outputs.changes }}
+        value: ${{ jobs.fingerprint.outputs.changes || jobs.detect.outputs.changes }}
+      fingerprints:
+        description: >-
+          With `fingerprint: true`, a JSON object of area name → fingerprint for
+          every area that has one. Hand it to _record-area-fingerprints.yml.
+        value: ${{ jobs.fingerprint.outputs.fingerprints || '{}' }}
+      verified:
+        description: >-
+          With `fingerprint: true`, a JSON array of the areas skipped because
+          their fingerprint already passed.
+        value: ${{ jobs.fingerprint.outputs.verified || '[]' }}
 
 jobs:
   detect:
     name: Detect Changes
+    if: ${{ !inputs.fingerprint }}
     runs-on: ${{ inputs.runner }}
     timeout-minutes: 5
     permissions:
@@ -78,3 +107,221 @@ jobs:
         with:
           base: ${{ github.event_name == 'push' && github.ref || '' }}
           filters: ${{ inputs.filters }}
+
+  fingerprint:
+    name: Detect Changes by Fingerprint
+    if: inputs.fingerprint
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 5
+    # No `permissions:` block on purpose. A block here would be validated at
+    # startup for EVERY caller, fingerprint or not, and `statuses: read` would
+    # then break each repo that never granted it. Without one the job inherits
+    # exactly what the calling job grants: `contents: read` to fetch the tree,
+    # `statuses: read` to see earlier green areas, `pull-requests: read` to
+    # follow a squash merge back to its PR.
+    outputs:
+      changes: ${{ steps.decide.outputs.changes }}
+      fingerprints: ${{ steps.compute.outputs.fingerprints }}
+      verified: ${{ steps.decide.outputs.verified }}
+    steps:
+      # Trees only, no blobs and no checkout: `read-tree` fills an index from
+      # tree objects, and `ls-files -s` lists the blob id of every path a pattern
+      # matches. That listing is the area's content; its hash is the fingerprint.
+      #
+      # On a pull request GITHUB_SHA is the MERGE commit, so the fingerprint names
+      # what would land — which is why the push after the merge finds it again.
+      #
+      # Only the dorny filter subset whose meaning git's `:(glob)` pathspec shares
+      # is fingerprinted: plain, quoted or unquoted list items. Negations, status
+      # prefixes, anchors, braces and extglobs would match differently or not at
+      # all, and a fingerprint that misses files would skip an area that changed.
+      # Such an area gets no fingerprint and always runs.
+      - name: Compute the area fingerprints
+        id: compute
+        env:
+          FILTERS: ${{ inputs.filters }}
+          TOKEN: ${{ github.token }}
+          SERVER_URL: ${{ github.server_url }}
+          REPOSITORY: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+        run: |
+          set -uo pipefail
+
+          names=$(printf '%s\n' "$FILTERS" | grep -oE '^[a-zA-Z0-9_-]+:' | tr -d ':' | jq -R . | jq -sc .)
+          echo "names=$names" >> "$GITHUB_OUTPUT"
+
+          # Fail open. No tree means no fingerprint, and no fingerprint means the
+          # area runs — a redundant run, never a skipped one.
+          give_up() {
+            echo "::warning::$1 — every area runs."
+            echo 'fingerprints={}' >> "$GITHUB_OUTPUT"
+            exit 0
+          }
+
+          work="${RUNNER_TEMP:-/tmp}/area-fingerprints"
+          rm -rf "$work"
+          git init -q "$work" || give_up "Could not create a scratch repository"
+          auth=$(printf 'x-access-token:%s' "$TOKEN" | base64 | tr -d '\n')
+          GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.extraheader GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $auth" \
+            git -C "$work" fetch -q --depth=1 --filter=blob:none --no-tags "$SERVER_URL/$REPOSITORY" "$SHA" \
+            || give_up "Could not fetch the tree of $SHA"
+          git -C "$work" read-tree "$SHA" || give_up "Could not read the tree of $SHA"
+
+          parsed="$work.filters"
+          printf '%s\n' "$FILTERS" | awk '
+            /^[[:space:]]*(#.*)?$/ { next }
+            /^[A-Za-z0-9_-]+:/ {
+              name = $0; sub(/:.*/, "", name)
+              rest = $0; sub(/^[^:]*:[[:space:]]*/, "", rest)
+              if (rest !~ /^(#.*)?$/) print "X\t" name
+              next
+            }
+            name == "" { next }
+            /^[[:space:]]+-[[:space:]]+/ {
+              p = $0; sub(/^[[:space:]]+-[[:space:]]+/, "", p)
+              if (p ~ /^\047/) {
+                if (p !~ /^\047[^\047]*\047[[:space:]]*(#.*)?$/) { print "X\t" name; next }
+                sub(/^\047/, "", p); sub(/\047.*$/, "", p)
+              } else if (p ~ /^"/) {
+                if (p !~ /^"[^"\\]*"[[:space:]]*(#.*)?$/) { print "X\t" name; next }
+                sub(/^"/, "", p); sub(/".*$/, "", p)
+              } else {
+                sub(/[[:space:]]+#.*$/, "", p); sub(/[[:space:]]+$/, "", p)
+                if (p ~ /^[*&|>%@`]/ || p ~ /:([[:space:]]|$)/) { print "X\t" name; next }
+              }
+              if (p == "" || p ~ /^!/ || p ~ /[{}()\\]/) { print "X\t" name; next }
+              print "P\t" name "\t" p
+              next
+            }
+            { print "X\t" name }
+          ' > "$parsed" || give_up "Could not parse the filters"
+
+          fingerprints='{}'
+          while IFS= read -r name; do
+            mapfile -t patterns < <(awk -F'\t' -v n="$name" '$1 == "P" && $2 == n { print $3 }' "$parsed")
+            if grep -qxF "X	$name" "$parsed" || [ "${#patterns[@]}" -eq 0 ]; then
+              echo "::warning::Area '$name' uses filter syntax a fingerprint cannot reproduce (negation, status prefix, anchor, brace or extglob) — it runs every time."
+              continue
+            fi
+            specs=()
+            for pattern in "${patterns[@]}"; do specs+=(":(glob)$pattern"); done
+            listing=$(git -C "$work" ls-files -s -- "${specs[@]}") || give_up "Could not list the files of area '$name'"
+            # The patterns are part of the input: widening a filter must not
+            # inherit the verdict the narrower one earned.
+            fingerprint=$({ printf 'ci-area/v1\n'; printf '%s\n' "${patterns[@]}"; printf '%s\n' "$listing"; } | sha256sum | cut -d' ' -f1)
+            fingerprints=$(jq -c --arg n "$name" --arg f "$fingerprint" '. + {($n): $f}' <<< "$fingerprints")
+          done < <(jq -r '.[]' <<< "$names")
+
+          echo "fingerprints=$fingerprints" >> "$GITHUB_OUTPUT"
+          echo "Fingerprints: $fingerprints"
+
+      # One GraphQL call collects the latest status contexts of the last 100
+      # commits of three histories, plus the commits of up to five pull requests
+      # associated with this one:
+      #   - this commit (the PR head on a pull request): its own retries, the PR's
+      #     earlier pushes, and its branch's ancestry;
+      #   - the base branch (the pushed branch on a push), for newer commits;
+      #   - the default branch, where a PR into `dev` meets what `main` passed;
+      #   - the associated pull requests, because a squash or rebase merge leaves
+      #     the PR's commits — and the statuses on them — out of every history.
+      # The status is only storage: the match is on context plus fingerprint, so
+      # whichever commit carries it is irrelevant.
+      - name: Look up fingerprints that already passed
+        id: lookup
+        if: ${{ !inputs.force && steps.compute.outputs.fingerprints != '{}' }}
+        env:
+          TOKEN: ${{ github.token }}
+          API_URL: ${{ github.api_url }}
+          GRAPHQL_URL: ${{ github.graphql_url }}
+          REPOSITORY: ${{ github.repository }}
+          SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          BASE: ${{ github.base_ref || github.ref_name }}
+        run: |
+          set -uo pipefail
+
+          give_up() {
+            echo "::warning::$1 — every area runs."
+            echo 'green=[]' >> "$GITHUB_OUTPUT"
+            exit 0
+          }
+
+          # A token without `statuses: read` does not make GraphQL fail — it
+          # answers with no statuses, which reads as "nothing passed yet" and
+          # would hide the missing grant forever. The REST endpoint refuses
+          # outright, so it turns that into a warning someone can act on.
+          curl -fsS --max-time 30 -o /dev/null \
+            -H "Authorization: Bearer $TOKEN" -H 'Accept: application/vnd.github+json' \
+            "$API_URL/repos/$REPOSITORY/commits/$SHA/status" \
+            || give_up "Cannot read commit statuses — grant 'statuses: read' to the job calling _detect-changes.yml"
+
+          query='
+            query($owner: String!, $name: String!, $sha: GitObjectID!, $base: String!, $n: Int!) {
+              repository(owner: $owner, name: $name) {
+                defaultBranchRef { target { ...History } }
+                base: ref(qualifiedName: $base) { target { ...History } }
+                object(oid: $sha) {
+                  ...History
+                  ... on Commit {
+                    associatedPullRequests(first: 5) { nodes { commits(last: $n) { nodes { commit { ...Status } } } } }
+                  }
+                }
+              }
+            }
+            fragment History on GitObject { ... on Commit { history(first: $n) { nodes { ...Status } } } }
+            fragment Status on Commit { status { contexts { context state description } } }'
+
+          body=$(jq -nc --arg q "$query" --arg owner "${REPOSITORY%%/*}" --arg name "${REPOSITORY#*/}" \
+            --arg sha "$SHA" --arg base "refs/heads/$BASE" \
+            '{query: $q, variables: {owner: $owner, name: $name, sha: $sha, base: $base, n: 100}}')
+          answer=$(curl -fsS --max-time 60 -X POST \
+            -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+            --data "$body" "$GRAPHQL_URL") || give_up "The status lookup failed"
+
+          if ! jq -e '.data.repository' <<< "$answer" > /dev/null 2>&1; then
+            give_up "The status lookup returned no repository: $(jq -c '.errors' <<< "$answer" 2> /dev/null)"
+          fi
+          # Partial answers are still answers. Without `pull-requests: read` the
+          # associated pull requests come back as an error beside the histories;
+          # the histories still count, only a squash merge loses its PR's records.
+          if jq -e '.errors' <<< "$answer" > /dev/null 2>&1; then
+            echo "::warning::Part of the status lookup failed, the rest still counts: $(jq -c '[.errors[].message]' <<< "$answer")"
+          fi
+
+          green=$(jq -c '[.. | objects | select(has("context") and has("state"))
+            | select(.state == "SUCCESS" and (.context | startswith("ci-area/")))
+            | {context, description}] | unique' <<< "$answer") || give_up "Could not read the status answer"
+          echo "green=$green" >> "$GITHUB_OUTPUT"
+          echo "Green area records found: $(jq length <<< "$green")"
+
+      # An area runs when it is forced, has no fingerprint, or its fingerprint
+      # has no green record. Nothing else — no diff, no predecessor's verdict.
+      - name: Decide which areas run
+        id: decide
+        env:
+          FORCE: ${{ inputs.force }}
+          NAMES: ${{ steps.compute.outputs.names }}
+          FINGERPRINTS: ${{ steps.compute.outputs.fingerprints }}
+          GREEN: ${{ steps.lookup.outputs.green }}
+        run: |
+          set -euo pipefail
+          fps=$FINGERPRINTS
+          [ -n "$fps" ] || fps='{}'
+          decision=$(jq -nc --argjson names "${NAMES:-[]}" --argjson fps "$fps" \
+            --argjson green "${GREEN:-[]}" --arg force "$FORCE" '
+            ($green | map("\(.context)=\(.description)")) as $passed
+            | [$names[] | . as $n | {
+                name: $n,
+                fingerprint: $fps[$n],
+                verified: ($force != "true" and $fps[$n] != null
+                  and any($passed[]; . == "ci-area/\($n)=\($fps[$n])"))
+              }]')
+          changes=$(jq -c '[.[] | select(.verified | not) | .name]' <<< "$decision")
+          verified=$(jq -c '[.[] | select(.verified) | .name]' <<< "$decision")
+          echo "changes=$changes" >> "$GITHUB_OUTPUT"
+          echo "verified=$verified" >> "$GITHUB_OUTPUT"
+          echo "Run: $changes — already green: $verified"
+          {
+            echo '| Area | Fingerprint | Decision |'
+            echo '| :--- | :---------- | :------- |'
+            jq -r '.[] | "| `\(.name)` | `\(.fingerprint // "none" | .[0:12])` | \(if .verified then "already green" else "runs" end) |"' <<< "$decision"
+          } >> "${GITHUB_STEP_SUMMARY:-/dev/null}"
