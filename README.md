@@ -56,7 +56,7 @@ Then delete the body that used to live in that file. Nothing else moves. List `s
 
 A **body** is prefixed with `_` and runs only via `workflow_call`. Anything without the prefix is an ordinary workflow — including this repo's own stubs.
 
-Nineteen bodies in four groups: **branch flow** (`_promotion-pr.yml`, `_queue-branch.yml`, `_fast-forward-queue.yml`), **releasing** (`_release-please.yml`, `_publish-npm.yml`, `_publish-goreleaser.yml`), **CI** (`_ci-check.yml`, plus one body per stack — Node, Laravel, Go, OpenTofu, Rust, E2E, Lighthouse), and **reporting and short-circuits** (`_codeql.yml`, `_coverage.yml`, `_verified.yml`, `_record-verified.yml`, `_detect-changes.yml`).
+Nineteen bodies in four groups: **branch flow** (`_promotion-pr.yml`, `_queue-branch.yml`, `_fast-forward-queue.yml`), **releasing** (`_release-please.yml`, `_publish-npm.yml`, `_publish-goreleaser.yml`), **CI** (`_ci-check.yml`, plus one body per stack — Node, Laravel, Go, OpenTofu, Rust, E2E, Lighthouse), and **reporting and short-circuits** (`_codeql.yml`, `_coverage.yml`, `_verified.yml`, `_record-verified.yml`, `_detect-changes.yml`, `_record-area-fingerprints.yml`).
 
 <details>
 <summary>All 19 bodies, and why <code>ci.yml</code> is not one of them</summary>
@@ -74,6 +74,7 @@ Nineteen bodies in four groups: **branch flow** (`_promotion-pr.yml`, `_queue-br
 | `_verified.yml`           | Has this tree already passed? — outputs `skip`           | ✅ reusable |
 | `_record-verified.yml`    | Marks a tree verified once the caller's jobs are green   | ✅ reusable |
 | `_detect-changes.yml`     | Which parts a PR touched — outputs `changes`             | ✅ reusable |
+| `_record-area-fingerprints.yml` | Marks areas green by content fingerprint, as commit statuses | ✅ reusable |
 | `_ci-node.yml`            | typecheck, test, build for Node libraries                | ✅ reusable |
 | `_ci-laravel.yml`         | Pest across PHP × Laravel, PostgreSQL, PCOV, Pint        | ✅ reusable |
 | `_ci-go.yml`              | gofmt, vet, golangci-lint, build, unit + acceptance      | ✅ reusable |
@@ -339,6 +340,45 @@ The marker keys on the **tree hash**, so it names the content rather than the co
 
 **Which jobs the marker stands for is the caller's decision** — that is why `record-verified` takes its `if:` in the stub. Gating it on lint alone would record a tree as verified that was never tested.
 
+#### Per area, by content fingerprint
+
+`_verified.yml` is all or nothing: one changed byte anywhere runs the whole suite. `_detect-changes.yml` with `fingerprint: true` makes the same decision **per area** — each filter gets a fingerprint over the blobs its patterns match, and an area is skipped only when a green run already recorded exactly that fingerprint. A red or cancelled predecessor does not count, and there is no diff against it: a revert, a retry, a release PR and the push that follows a merged PR all land on a fingerprint that already passed.
+
+```yaml
+jobs:
+  changes:
+    permissions:
+      contents: read
+      statuses: read # without it every area runs, with a warning
+      pull-requests: read # lets a squash merge find what its PR recorded
+    uses: kirchDev/workflows/.github/workflows/_detect-changes.yml@<sha> # v0.x.y
+    with:
+      fingerprint: true
+      filters: |
+        core:
+          - services/core/**
+          - .github/workflows/ci.yml
+
+  # … jobs gated on contains(fromJSON(needs.changes.outputs.changes), 'core'), then gate …
+
+  record-areas:
+    needs: [changes, gate]
+    if: needs.gate.result == 'success' && github.event.pull_request.draft != true
+    permissions:
+      statuses: write
+    uses: kirchDev/workflows/.github/workflows/_record-area-fingerprints.yml@<sha> # v0.x.y
+    with:
+      fingerprints: ${{ needs.changes.outputs.fingerprints }}
+      areas: '*'
+```
+
+The record is a `ci-area/<name>` **commit status** with the fingerprint as its description — not `actions/cache`, which expires after seven days, and not a file parallel runs would overwrite. The lookup reads the last 100 commits of this commit's history, the base branch and the default branch, plus the commits of associated pull requests, so a squash merge still finds what its PR recorded. Recording the verified areas again is what keeps them inside that window.
+
+- **`areas` is a claim about what passed.** Pass `'*'` only when every area job is gated on `changes` alone. An area skipped for any other reason — a draft, a release-only PR, a job-level `if:` — must be left out.
+- **List the CI files in the filters.** The fingerprint covers what the patterns match and nothing else; an area whose filter omits `ci.yml` keeps its green verdict across a change to the job that checks it.
+- **Only the plain filter subset is fingerprinted** — list items, quoted or not, matched through git's `:(glob)` pathspec. Negations, status prefixes, anchors, braces and extglobs would match differently, so such an area gets no fingerprint and runs every time, with a warning.
+- **Fails open everywhere.** No tree, no lookup or no statuses permission means the area runs; a fork's read-only token records nothing.
+
 ### When a body almost fits
 
 A body is taken whole or not at all — there is no way to override one step. For that case each Node body's setup also exists as a composite action, which runs **in your own job**:
@@ -395,6 +435,9 @@ commands do not need an authenticated `git fetch` afterwards.
 Branch pushes compare against the commit before the push, with history fetched
 by checkout. `force: true` returns every filter name without a checkout. Keep the
 filters in the calling repository, including shared contracts and generators.
+With `fingerprint: true` the diff is not consulted at all: a blob-less, depth-1
+fetch of the tree under test feeds the fingerprints, and the job additionally
+needs `statuses: read`.
 
 `_ci-rust.yml` finds `rust-toolchain.toml` or `rust-toolchain` from its
 `working-directory` up to the repository root and installs that toolchain. Without
