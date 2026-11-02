@@ -11,9 +11,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 
-const workflow = readFileSync('.github/workflows/_ci-rust.yml', 'utf8');
-function script(name: string): string {
-  const step = workflow
+function script(name: string, file = '_ci-rust.yml'): string {
+  const step = readFileSync(`.github/workflows/${file}`, 'utf8')
     .split(`      - name: ${name}\n`)[1]
     ?.split('\n      - ')[0];
   const body = step?.split('        run: |\n')[1];
@@ -354,5 +353,270 @@ test('optional aggregate gates remain on by default and reject failed or cancell
         run.stderr
       );
     }
+  }
+});
+
+const AREA_FILTERS = [
+  'tools:',
+  '  - tools/**',
+  "  - '*'",
+  'core:',
+  '  - services/core/**/*.json # comment',
+  '  - "packages/**/Capacity.java"',
+  'negated:',
+  '  - tools/**',
+  "  - '!tools/docs/**'",
+  'braced:',
+  "  - 'src/**/*.{ts,js}'",
+  ''
+].join('\n');
+
+function git(cwd: string, ...args: string[]): string {
+  const run = spawnSync('git', args, {
+    cwd,
+    encoding: 'utf8',
+    env: {
+      ...process.env,
+      GIT_AUTHOR_NAME: 't',
+      GIT_AUTHOR_EMAIL: 't@t',
+      GIT_COMMITTER_NAME: 't',
+      GIT_COMMITTER_EMAIL: 't@t',
+      GIT_CONFIG_GLOBAL: '/dev/null'
+    }
+  });
+  assert.equal(run.status, 0, run.stderr);
+  return run.stdout.trim();
+}
+
+function fingerprints(root: string, sha: string): Record<string, string> {
+  const output = join(root, 'output');
+  writeFileSync(output, '');
+  const run = spawnSync(
+    'bash',
+    ['-c', script('Compute the area fingerprints', '_detect-changes.yml')],
+    {
+      env: {
+        ...process.env,
+        RUNNER_TEMP: root,
+        GITHUB_OUTPUT: output,
+        FILTERS: AREA_FILTERS,
+        TOKEN: '',
+        SERVER_URL: `file://${root}`,
+        REPOSITORY: 'source',
+        SHA: sha
+      },
+      encoding: 'utf8'
+    }
+  );
+  assert.equal(run.status, 0, run.stderr);
+  const lines = readFileSync(output, 'utf8').trim().split('\n');
+  assert.equal(
+    lines[0],
+    'names=["tools","core","negated","braced"]',
+    'every filter is named, fingerprinted or not'
+  );
+  const line = lines.find((entry) => entry.startsWith('fingerprints='));
+  assert.ok(line, run.stdout);
+  return JSON.parse(line.slice('fingerprints='.length));
+}
+
+test('area fingerprints follow the matched content and skip filters git cannot reproduce', () => {
+  const root = mkdtempSync(join(tmpdir(), 'workflow-fingerprint-'));
+  const source = join(root, 'source');
+  const write = (path: string, content: string) => {
+    mkdirSync(join(source, path, '..'), { recursive: true });
+    writeFileSync(join(source, path), content);
+  };
+  try {
+    mkdirSync(source);
+    git(source, 'init', '-q');
+    git(source, 'config', 'uploadpack.allowFilter', 'true');
+    git(source, 'config', 'uploadpack.allowAnySHA1InWant', 'true');
+    write('package.json', '{}');
+    write('tools/cli/run.ts', 'one');
+    write('services/core/app/config.json', '{}');
+    write('services/core/app/Model.php', '<?php');
+    write('packages/minecraft/a/Capacity.java', 'class A {}');
+    const commit = (message: string) => {
+      git(source, 'add', '-A');
+      git(
+        source,
+        '-c',
+        'user.name=t',
+        '-c',
+        'user.email=t@t',
+        'commit',
+        '-qm',
+        message
+      );
+      return git(source, 'rev-parse', 'HEAD');
+    };
+
+    const first = fingerprints(root, commit('first'));
+    assert.deepEqual(Object.keys(first), ['tools', 'core']);
+    for (const value of Object.values(first))
+      assert.match(value, /^[0-9a-f]{64}$/);
+
+    write('services/core/app/Model.php', '<?php // outside every pattern');
+    const outside = fingerprints(root, commit('outside'));
+    assert.deepEqual(
+      outside,
+      first,
+      'a file no pattern matches changes nothing'
+    );
+
+    write('packages/minecraft/a/Capacity.java', 'class B {}');
+    const core = fingerprints(root, commit('core'));
+    assert.equal(core.tools, first.tools);
+    assert.notEqual(core.core, first.core, 'a /**/ match moves the area');
+
+    write('README.md', 'root file');
+    const rooted = fingerprints(root, commit('root'));
+    assert.notEqual(rooted.tools, core.tools, "'*' matches a new root file");
+    assert.equal(rooted.core, core.core);
+
+    git(source, 'revert', '--no-edit', 'HEAD', 'HEAD~1');
+    const reverted = fingerprints(root, git(source, 'rev-parse', 'HEAD'));
+    assert.deepEqual(
+      reverted,
+      outside,
+      'a revert lands on a fingerprint that already passed'
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('an unreachable tree fails open with no fingerprint at all', () => {
+  const root = mkdtempSync(join(tmpdir(), 'workflow-fingerprint-open-'));
+  try {
+    assert.deepEqual(fingerprints(root, '0'.repeat(40)), {});
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('an area runs unless forced off its exact green fingerprint', () => {
+  const root = mkdtempSync(join(tmpdir(), 'workflow-fingerprint-decide-'));
+  const output = join(root, 'output');
+  const fp = (char: string) => char.repeat(64);
+  const decide = (env: Record<string, string>) => {
+    writeFileSync(output, '');
+    const run = spawnSync(
+      'bash',
+      ['-c', script('Decide which areas run', '_detect-changes.yml')],
+      {
+        env: {
+          ...process.env,
+          GITHUB_OUTPUT: output,
+          GITHUB_STEP_SUMMARY: join(root, 'summary'),
+          NAMES: '["tools","core","bots","raw"]',
+          FINGERPRINTS: JSON.stringify({
+            tools: fp('a'),
+            core: fp('b'),
+            bots: fp('c')
+          }),
+          GREEN: JSON.stringify([
+            { context: 'ci-area/tools', description: fp('a') },
+            { context: 'ci-area/core', description: fp('f') },
+            { context: 'ci-area/elsewhere', description: fp('c') }
+          ]),
+          FORCE: 'false',
+          ...env
+        },
+        encoding: 'utf8'
+      }
+    );
+    assert.equal(run.status, 0, run.stderr);
+    return readFileSync(output, 'utf8').trim();
+  };
+  try {
+    assert.equal(
+      decide({}),
+      'changes=["core","bots","raw"]\nverified=["tools"]',
+      'only the exact context and fingerprint count'
+    );
+    assert.equal(
+      decide({ FORCE: 'true' }),
+      'changes=["tools","core","bots","raw"]\nverified=[]'
+    );
+    assert.equal(
+      decide({ GREEN: '', FINGERPRINTS: '' }),
+      'changes=["tools","core","bots","raw"]\nverified=[]',
+      'a failed lookup runs everything'
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('recording writes one status per named area and refuses malformed input', () => {
+  const root = mkdtempSync(join(tmpdir(), 'workflow-fingerprint-record-'));
+  const calls = join(root, 'calls');
+  writeFileSync(
+    join(root, 'curl'),
+    ['#!/bin/sh', 'echo "$* $(cat)" >> "$CALLS"', ''].join('\n'),
+    { mode: 0o755 }
+  );
+  const fp = 'd'.repeat(64);
+  const record = (env: Record<string, string>) => {
+    writeFileSync(calls, '');
+    const run = spawnSync(
+      'bash',
+      [
+        '-c',
+        script(
+          'Mark the green areas on this commit',
+          '_record-area-fingerprints.yml'
+        )
+      ],
+      {
+        env: {
+          ...process.env,
+          PATH: `${root}:${process.env.PATH}`,
+          CALLS: calls,
+          TOKEN: 't',
+          API_URL: 'https://api.example',
+          REPOSITORY: 'o/r',
+          HEAD_REPOSITORY: 'o/r',
+          SHA: 'abc',
+          RUN_URL: 'https://run',
+          FINGERPRINTS: JSON.stringify({ tools: fp, core: fp }),
+          AREAS: '*',
+          ...env
+        },
+        encoding: 'utf8'
+      }
+    );
+    return {
+      status: run.status,
+      calls: readFileSync(calls, 'utf8').trim().split('\n').filter(Boolean)
+    };
+  };
+  try {
+    const all = record({});
+    assert.equal(all.status, 0);
+    assert.equal(all.calls.length, 2);
+    assert.match(all.calls[0], /\/repos\/o\/r\/statuses\/abc /);
+    assert.match(all.calls[0], /"context":"ci-area\/tools"/);
+    assert.match(all.calls[0], new RegExp(`"description":"${fp}"`));
+
+    const named = record({ AREAS: '["core","unknown"]' });
+    assert.equal(named.status, 0);
+    assert.equal(named.calls.length, 1);
+    assert.match(named.calls[0], /ci-area\/core/);
+
+    assert.deepEqual(record({ HEAD_REPOSITORY: 'fork/r' }), {
+      status: 0,
+      calls: []
+    });
+    assert.deepEqual(record({ FINGERPRINTS: '' }), { status: 0, calls: [] });
+    assert.equal(record({ AREAS: 'tools' }).status, 1);
+    assert.equal(
+      record({ FINGERPRINTS: JSON.stringify({ tools: 'nope' }) }).status,
+      1
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
   }
 });
