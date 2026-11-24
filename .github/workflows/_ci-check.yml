@@ -279,12 +279,19 @@ jobs:
 
       # Each task in its own log group with its own error line, so a red build
       # names the check that failed without anyone opening the log.
+      #
+      # EVERY TASK RUNS, and the job fails at the end. Stopping at the first red
+      # one meant a format error hid whether typecheck and test passed at all —
+      # one push to learn about each failure in turn. The tasks are independent
+      # by construction (each is a bare `pnpm <task>` the gate script chains), so
+      # running the rest after a failure costs seconds and answers everything.
       - name: Run the checks
         env:
           TASKS: ${{ steps.resolve.outputs.tasks }}
         run: |
           set -uo pipefail
 
+          failed=()
           for task in $TASKS; do
             echo "::group::$task"
             if pnpm "$task"; then
@@ -292,9 +299,14 @@ jobs:
             else
               echo "::endgroup::"
               echo "::error::$task failed."
-              exit 1
+              failed+=("$task")
             fi
           done
+
+          if [ "${#failed[@]}" -gt 0 ]; then
+            echo "::error::${#failed[@]} check(s) failed: ${failed[*]}"
+            exit 1
+          fi
 
   # THE ONE CHECK BRANCH PROTECTION NAMES. `Lint & Format` is stable today,
   # and this body runs exactly one job — but that is a fact about today, not
@@ -322,15 +334,21 @@ jobs:
     # This way the gate is cancelled with the run it belongs to, and the run that
     # superseded it reports under the same name. A job cancelled on its own (a
     # timeout, say) still fails the gate, which is correct.
-    if: ${{ !cancelled() && inputs.gate }}
+    #
+    # SKIPPED, NOT GREEN, WHEN THE CHECK NEVER RAN. On a draft the check job is
+    # skipped, and a gate that then answered `success` looked exactly like a
+    # gate whose checks had passed — a reviewer reading the PR could not tell a
+    # green result from a missing one. A skipped job still reports, so the
+    # required check is satisfied the same way, and undrafting
+    # (`ready_for_review`) starts the run that answers for real.
+    if: ${{ !cancelled() && inputs.gate && needs.check.result != 'skipped' }}
     runs-on: ${{ inputs.runner }}
     permissions: {}
     steps:
-      # `skipped` PASSES, deliberately. This body skips what the repo has no
-      # script for, and skips everything on a draft pull request — a draft
-      # cannot be merged, and a check a repo never runs is not a check it
-      # failed. `cancelled` and `failure` both fail, so a cancelled run cannot
-      # be mistaken for a green one.
+      # `skipped` would pass here, but the job-level condition above already
+      # keeps this step from ever seeing it for `check`. `cancelled` and
+      # `failure` both fail, so a cancelled run cannot be mistaken for a green
+      # one.
       - name: Every job must have succeeded or been skipped
         env:
           RESULTS: ${{ join(needs.*.result, ' ') }}
