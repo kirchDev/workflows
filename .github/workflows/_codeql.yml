@@ -53,6 +53,12 @@ jobs:
       actions: read
       contents: read
 
+    # A draft PR is explicitly "not ready", the same reading _ci-check.yml
+    # gives it: analysing one gates nothing, and the caller's
+    # `ready_for_review` trigger runs the analysis the moment it is undrafted.
+    # Push, schedule and dispatch carry no pull request and always run.
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+
     strategy:
       fail-fast: false
       matrix:
@@ -113,15 +119,16 @@ jobs:
     # This way the gate is cancelled with the run it belongs to, and the run that
     # superseded it reports under the same name. A job cancelled on its own (a
     # timeout, say) still fails the gate, which is correct.
-    if: ${{ !cancelled() }}
+    #
+    # Skipped rather than green when the analysis was skipped on a draft — the
+    # same distinction _ci-check.yml's gate draws, so a missing scan never
+    # reads as a clean one.
+    if: ${{ !cancelled() && needs.analyze.result != 'skipped' }}
     runs-on: ${{ inputs.runner }}
     permissions: {}
     steps:
-      # `skipped` PASSES, deliberately. This body skips what the repo has no
-      # script for, and skips everything on a draft pull request — a draft
-      # cannot be merged, and a check a repo never runs is not a check it
-      # failed. `cancelled` and `failure` both fail, so a cancelled run cannot
-      # be mistaken for a green one.
+      # `cancelled` and `failure` both fail, so a cancelled run cannot be
+      # mistaken for a green one.
       - name: Every job must have succeeded or been skipped
         env:
           RESULTS: ${{ join(needs.*.result, ' ') }}
