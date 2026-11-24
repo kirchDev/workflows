@@ -259,6 +259,8 @@ jobs:
     uses: kirchDev/workflows/.github/workflows/_ci-check.yml@9f3c1a2 # v0.1.0
 ```
 
+A repo that commits straight onto its integration branch may add `push: branches: [dev]` to the stub's trigger: the check runs on every push and the `Gate` judges it, and only a draft pull request skips both.
+
 **The check list is derived, not listed.** Each repo already declares its checks in `package.json`, in order — `"check": "pnpm lint && pnpm format && pnpm typecheck && pnpm check:policy"` — and the copied workflows listed those same commands a second time as steps. The body splits the gate script into its `pnpm <task>` calls and runs each as its own step of a single job, which reports as `CI / Lint & Format`.
 
 <details>
