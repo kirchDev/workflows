@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.19.1](https://github.com/kirchDev/workflows/compare/v0.19.0...v0.19.1) (2026-11-24)
+
+
+### Bug Fixes
+
+* **ci-check:** run the check on push events ([22899b7](https://github.com/kirchDev/workflows/commit/22899b7d133dd99db1c773113fb11d66c7f89c62))
+
 ## [0.19.0](https://github.com/kirchDev/workflows/compare/v0.18.0...v0.19.0) (2026-11-24)
 
 
