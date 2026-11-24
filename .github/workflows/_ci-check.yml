@@ -3,7 +3,9 @@
 name: CI Check (reusable)
 
 # Reusable body for the Node repos whose CI is a set of independent checks.
-# The caller carries the `pull_request` trigger. See README → CI for the stub.
+# The caller carries the trigger — `pull_request`, and optionally `push` onto
+# an integration branch for a repo that commits there directly. See README → CI
+# for the stub.
 #
 # ONE JOB, ONE STEP PER TASK — not one step running them all, and not one job
 # per task either.
@@ -142,7 +144,14 @@ jobs:
       contents: read
     # A draft PR is explicitly "not ready" — the queue workflows read it the
     # same way, and CI running on one would gate nothing.
-    if: github.event.pull_request.draft == false
+    #
+    # THE EVENT IS NAMED, NOT INFERRED. A push carries no pull request, so the
+    # draft flag is null there, and whether `null == false` holds is down to
+    # the expression language's coercion rules rather than anything written
+    # here. Naming the event leaves nothing to coercion: push, schedule and
+    # dispatch always run, a pull request runs unless it is a draft. The same
+    # condition `_codeql.yml`'s analysis carries.
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -172,8 +181,9 @@ jobs:
       # extra SHA pin, and the same idiom as `cache: pnpm` above. It keys on the
       # build files and the wrapper properties, restores the wrapper distribution
       # and dependency caches here and saves them in its post step — so a re-run
-      # of the same pull request downloads neither. This gate runs on
-      # `pull_request` alone, so nothing here warms a DIFFERENT pull request.
+      # of the same pull request downloads neither. A pull request's cache is
+      # scoped to that pull request; one saved by a caller's `push` run lands in
+      # the branch's scope, which pull requests against that branch restore.
       #
       # TOOLCHAINS ARE NOT CACHED, deliberately. With the JDK the toolchain asks
       # for installed here, Gradle resolves it locally and provisions nothing.
@@ -211,10 +221,10 @@ jobs:
       #
       # EXACT KEY, NO `restore-keys`. A near miss would restore sources for a
       # different ref and hand the checks content that is not what the repo
-      # declares. This gate runs on `pull_request` alone, so what it saves serves
-      # that pull request's re-runs; a hit across pull requests comes from the
-      # default branch's own writer, which has to run the identical command so
-      # key and path list match.
+      # declares. On `pull_request` what it saves serves that pull request's
+      # re-runs; a hit across pull requests comes from a writer on the base
+      # branch — a caller's `push` run, or the default branch's own workflow —
+      # which has to run the identical command so key and path list match.
       - name: Cache the remote sources
         if: steps.remote-sources.outputs.cacheable == 'true'
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -340,7 +350,8 @@ jobs:
     # gate whose checks had passed — a reviewer reading the PR could not tell a
     # green result from a missing one. A skipped job still reports, so the
     # required check is satisfied the same way, and undrafting
-    # (`ready_for_review`) starts the run that answers for real.
+    # (`ready_for_review`) starts the run that answers for real. On a push the
+    # check always runs, so this gate always judges it.
     if: ${{ !cancelled() && inputs.gate && needs.check.result != 'skipped' }}
     runs-on: ${{ inputs.runner }}
     permissions: {}

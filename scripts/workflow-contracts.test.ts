@@ -419,6 +419,131 @@ test('draft pull requests skip CodeQL and leave both gates skipped, not green', 
   assert.match(stub, /types: \[[^\]]*ready_for_review[^\]]*\]/u);
 });
 
+// Evaluates the subset of the Actions expression language a job `if:` here
+// uses — `||`, `&&`, `!`, parentheses, `==`/`!=`, string and boolean literals,
+// context paths and `cancelled()` — with its documented loose equality: values
+// of different types compare as numbers (null and false are 0, true is 1), and
+// strings compare case-insensitively.
+function evaluate(
+  expression: string,
+  context: Record<string, unknown>
+): boolean {
+  const source = expression.replace(/^\$\{\{\s*|\s*\}\}$/gu, '');
+  const tokens =
+    source.match(/\|\||&&|[!=]=|!|\(|\)|'(?:[^']|'')*'|[\w.-]+(?:\(\))?/gu) ??
+    [];
+  assert.equal(tokens.join(''), source.replace(/\s+/gu, ''), source);
+  let at = 0;
+  const truthy = (value: unknown) =>
+    !(value === null || value === false || value === 0 || value === '') &&
+    !Number.isNaN(value);
+  const equal = (left: unknown, right: unknown) =>
+    typeof left === 'string' && typeof right === 'string'
+      ? left.toLowerCase() === right.toLowerCase()
+      : typeof left === typeof right
+        ? left === right
+        : Number(left) === Number(right);
+  const primary = (): unknown => {
+    const token = tokens[at++]!;
+    if (token === '(') {
+      const value = or();
+      assert.equal(tokens[at++], ')', source);
+      return value;
+    }
+    if (token === '!') return !truthy(primary());
+    if (token.startsWith("'")) return token.slice(1, -1).replaceAll("''", "'");
+    if (token === 'true' || token === 'false') return token === 'true';
+    if (token in context) return context[token];
+    return token
+      .split('.')
+      .reduce<unknown>(
+        (value, key) =>
+          (value as Record<string, unknown> | null)?.[key] ?? null,
+        context
+      );
+  };
+  const equality = (): unknown => {
+    let left = primary();
+    while (tokens[at] === '==' || tokens[at] === '!=') {
+      const negate = tokens[at++] === '!=';
+      left = equal(left, primary()) !== negate;
+    }
+    return left;
+  };
+  const and = (): unknown => {
+    let left = equality();
+    while (tokens[at] === '&&') {
+      at++;
+      const right = equality();
+      left = truthy(left) && truthy(right);
+    }
+    return left;
+  };
+  const or = (): unknown => {
+    let left = and();
+    while (tokens[at] === '||') {
+      at++;
+      const right = and();
+      left = truthy(left) || truthy(right);
+    }
+    return left;
+  };
+  const result = or();
+  assert.equal(at, tokens.length, source);
+  return truthy(result);
+}
+
+test('a push runs the check and its gate; a draft pull request skips both', () => {
+  const body = readFileSync('.github/workflows/_ci-check.yml', 'utf8');
+  const condition = (job: string) => {
+    const match = body
+      .split(`\n  ${job}:\n`)[1]
+      ?.match(/^    if: (.+)$/mu)?.[1];
+    assert.ok(match, `Missing if: on ${job}`);
+    return match;
+  };
+  const check = condition('check');
+  const gate = condition('gate');
+  // Pinned verbatim as well: under the documented coercion the bare
+  // `draft == false` also holds on a push, so only the wording proves the
+  // event is named rather than left to `null == false`.
+  assert.equal(
+    check,
+    "github.event_name != 'pull_request' || github.event.pull_request.draft == false"
+  );
+
+  for (const [event, pullRequest, runs] of [
+    ['push', undefined, true],
+    ['workflow_dispatch', undefined, true],
+    ['pull_request', { draft: false }, true],
+    ['pull_request', { draft: true }, false]
+  ] as const) {
+    const github = {
+      event_name: event,
+      event: pullRequest ? { pull_request: pullRequest } : {}
+    };
+    assert.equal(
+      evaluate(check, { github }),
+      runs,
+      `check on ${event} (${JSON.stringify(pullRequest)})`
+    );
+    // The gate judges whatever the check did: a failing check still reaches
+    // it — and its script fails on `failure` — while a skipped one skips it.
+    for (const checkResult of runs ? ['success', 'failure'] : ['skipped']) {
+      assert.equal(
+        evaluate(gate, {
+          github,
+          inputs: { gate: true },
+          needs: { check: { result: checkResult } },
+          'cancelled()': false
+        }),
+        runs,
+        `gate on ${event} after ${checkResult}`
+      );
+    }
+  }
+});
+
 const AREA_FILTERS = [
   'tools:',
   '  - tools/**',
