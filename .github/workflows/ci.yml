@@ -31,3 +31,6 @@ jobs:
   check:
     name: CI
     uses: ./.github/workflows/_ci-check.yml
+    with:
+      # Matches .nvmrc; the body's default stays on 24 for every other caller.
+      node-version: '26'

@@ -335,7 +335,13 @@ test('optional aggregate gates remain on by default and reject failed or cancell
       /      gate:\n[\s\S]*?        type: boolean\n        default: true/u
     );
     const gate = source.split('\n  gate:\n')[1]!;
-    assert.ok(gate.includes('if: ${{ !cancelled() && inputs.gate }}'));
+    assert.ok(
+      gate.includes(
+        name === 'check'
+          ? "if: ${{ !cancelled() && inputs.gate && needs.check.result != 'skipped' }}"
+          : 'if: ${{ !cancelled() && inputs.gate }}'
+      )
+    );
     const command = gate
       .split('        run: |\n')[1]!
       .split('\n')
@@ -354,6 +360,63 @@ test('optional aggregate gates remain on by default and reject failed or cancell
       );
     }
   }
+});
+
+test('the gate runs every task and fails once, naming each failure', () => {
+  const root = mkdtempSync(join(tmpdir(), 'workflow-gate-'));
+  try {
+    // A stand-in `pnpm` that fails the tasks named in FAIL and logs every call.
+    writeFileSync(
+      join(root, 'pnpm'),
+      '#!/usr/bin/env bash\necho "$1" >> "$CALLS"\ncase " $FAIL " in *" $1 "*) exit 1 ;; esac\n',
+      { mode: 0o755 }
+    );
+    const command = script('Run the checks', '_ci-check.yml');
+    for (const [fail, status] of [
+      ['', 0],
+      ['format', 1],
+      ['format test', 1]
+    ] as const) {
+      const calls = join(root, 'calls');
+      writeFileSync(calls, '');
+      const run = spawnSync('bash', ['-c', command], {
+        env: {
+          ...process.env,
+          PATH: `${root}:${process.env.PATH}`,
+          TASKS: 'lint format typecheck test',
+          FAIL: fail,
+          CALLS: calls
+        },
+        encoding: 'utf8'
+      });
+      assert.equal(run.status, status, run.stderr);
+      assert.equal(
+        readFileSync(calls, 'utf8'),
+        'lint\nformat\ntypecheck\ntest\n'
+      );
+      for (const task of fail.split(' ').filter(Boolean))
+        assert.ok(run.stdout.includes(`::error::${task} failed.`), run.stdout);
+    }
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('draft pull requests skip CodeQL and leave both gates skipped, not green', () => {
+  const codeql = readFileSync('.github/workflows/_codeql.yml', 'utf8');
+  const analyze = codeql.split('\n  analyze:\n')[1]!.split('\n  gate:\n')[0]!;
+  assert.ok(
+    analyze.includes(
+      "if: github.event_name != 'pull_request' || github.event.pull_request.draft == false"
+    )
+  );
+  assert.ok(
+    codeql
+      .split('\n  gate:\n')[1]!
+      .includes("if: ${{ !cancelled() && needs.analyze.result != 'skipped' }}")
+  );
+  const stub = readFileSync('.github/workflows/codeql.yml', 'utf8');
+  assert.match(stub, /types: \[[^\]]*ready_for_review[^\]]*\]/u);
 });
 
 const AREA_FILTERS = [

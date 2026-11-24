@@ -1,0 +1,302 @@
+# yaml-language-server: $schema=https://json.schemastore.org/github-workflow.json
+
+name: Update the Project Agent Skills (reusable)
+
+# Refresh the project-scoped skills.sh skills, and open a pull request only if
+# anything actually moved.
+#
+# LIFTED FROM `sirargon-net`, which ran this as an `_open-regenerated-pr.yml`
+# call plus a second job. That second job is the reason this is a body of its
+# own rather than a stub template: a `schedule` always runs on the DEFAULT
+# branch, and `_open-regenerated-pr.yml` bases its pull request on the branch it
+# runs on — so a weekly refresh opened its PR into `main`, past `dev`. The repo
+# worked around it by having the scheduled run re-dispatch itself on `dev`.
+# Here the target is DERIVED instead, the same way `_fast-forward-queue.yml`
+# derives it: a repo with a `dev` branch integrates on `dev`, one without on its
+# default branch. A stub is then just a trigger.
+#
+# NOT A NESTED CALL OF `_open-regenerated-pr.yml`, deliberately. A body naming
+# another body has to spell out `kirchDev/workflows/…@<ref>` with a hard-coded
+# ref, and a caller pinning this body to one SHA would then run the inner one
+# from another commit — the same pin that lies which ADR-0006 keeps out of the
+# bodies for the composite action. The PR tail is duplicated instead.
+#
+# A repo without `skills-lock.json` installs no project skills, so it gets a
+# green no-op rather than an error — the stub can be rolled out estate-wide
+# ahead of the skills themselves.
+on:
+  workflow_call:
+    inputs:
+      command:
+        description: >-
+          Command that updates the skills. Empty runs the repo's own
+          `skills:update` script when `package.json` has one — that script is
+          where a repo pins its skills CLI version — and
+          `pnpm dlx skills@latest update -p -y` otherwise.
+        required: false
+        type: string
+        default: ''
+      paths:
+        description: >-
+          Newline-separated paths the update writes. Change detection and the
+          pull request are scoped to exactly these.
+        required: false
+        type: string
+        default: |
+          .agents/skills
+          .claude/skills
+          skills-lock.json
+      branch:
+        description: Branch the pull request is opened from.
+        required: false
+        type: string
+        default: bot/skills-update
+      title:
+        description: >-
+          Pull request title, also used as the commit message. A repo whose
+          commitlint config enforces a scope passes one here.
+        required: false
+        type: string
+        default: 'chore: update the project agent skills'
+      body:
+        description: Pull request body.
+        required: false
+        type: string
+        default: |
+          ## Update the project agent skills
+
+          Scheduled `skills update` over `skills-lock.json`. A skill is an instruction an agent follows — review the diff like any other change before merging.
+      assignees:
+        description: Comma-separated logins to assign.
+        required: false
+        type: string
+        default: ''
+      install:
+        description: >-
+          Setup before the update. Empty installs nothing — the skills CLI runs
+          through `pnpm dlx` and needs no project dependencies. A self-hosted
+          runner that lacks tooling bootstraps it here.
+        required: false
+        type: string
+        default: ''
+      node-version:
+        description: Node version.
+        required: false
+        type: string
+        default: '24'
+      runner:
+        description: Runner label for this body's job.
+        required: false
+        type: string
+        default: ubuntu-latest
+    secrets:
+      # Both optional, but one of them must be set once there is a PR to open —
+      # the resolve step fails with an error naming which one.
+      BWS_ACCESS_TOKEN:
+        description: Bitwarden Secrets Manager access token — opens the Release App PEM.
+        required: false
+      RELEASE_APP_PRIVATE_KEY:
+        description: >-
+          The Release App's PEM, for owners whose CI has no Bitwarden access.
+          When set, Bitwarden is skipped.
+        required: false
+
+# One refresh per repo at a time. Not keyed on the ref: the target branch is
+# derived, so a dispatch from `main` and one from `dev` write the same PR.
+concurrency:
+  group: ${{ github.workflow }}-skills-update
+  cancel-in-progress: true
+
+jobs:
+  update:
+    name: Update the project skills
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - name: Resolve the integration branch
+        id: topology
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          if gh api "repos/$GH_REPO/branches/dev" --silent 2>/dev/null; then
+            branch=dev
+          else
+            # Asked, not read off the event: a `schedule` payload carries no
+            # repository object to read it from.
+            branch=$(gh api "repos/$GH_REPO" --jq .default_branch)
+          fi
+
+          echo "branch=$branch" >> "$GITHUB_OUTPUT"
+          echo "Integration branch resolved to '$branch'."
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ steps.topology.outputs.branch }}
+          persist-credentials: false
+
+      - name: Does this repo install project skills?
+        id: lock
+        run: |
+          if [ -f skills-lock.json ]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            echo "No skills-lock.json — this repo installs no project skills, nothing to update."
+          fi
+
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+        if: steps.lock.outputs.present == 'true'
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        if: steps.lock.outputs.present == 'true'
+        with:
+          node-version: ${{ inputs.node-version }}
+
+      - name: Prepare
+        if: steps.lock.outputs.present == 'true' && inputs.install != ''
+        env:
+          INSTALL_COMMAND: ${{ inputs.install }}
+        run: bash -c "$INSTALL_COMMAND"
+
+      - name: Update the skills
+        if: steps.lock.outputs.present == 'true'
+        env:
+          UPDATE_COMMAND: ${{ inputs.command }}
+          # The CLI fetches every skill's source repository; an authenticated
+          # request keeps a repo with many skills clear of the anonymous rate limit.
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if [ -z "$UPDATE_COMMAND" ]; then
+            if [ -f package.json ] && node -e 'process.exit(require("./package.json").scripts?.["skills:update"] ? 0 : 1)'; then
+              UPDATE_COMMAND='pnpm skills:update'
+            else
+              UPDATE_COMMAND='pnpm dlx skills@latest update -p -y'
+            fi
+          fi
+          echo "Running: $UPDATE_COMMAND"
+          bash -c "$UPDATE_COMMAND"
+
+      # `git status`, not `git diff`: an update can ADD files inside a skill, and
+      # an untracked file is invisible to `git diff`.
+      - name: Check for changes
+        id: diff
+        if: steps.lock.outputs.present == 'true'
+        env:
+          PATHS: ${{ inputs.paths }}
+        run: |
+          set -euo pipefail
+          mapfile -t files < <(printf '%s\n' "$PATHS" | sed '/^$/d')
+
+          if [ -z "$(git status --porcelain -- "${files[@]}")" ]; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "The project skills are already current."
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            git status --short -- "${files[@]}"
+          fi
+
+      # Same owner table as _release-please.yml — the PR is opened by the
+      # owner's Release App, so it triggers CI (a GITHUB_TOKEN push would not)
+      # and its commit is written through the API, which GitHub signs.
+      - name: Resolve the App for this owner
+        id: app
+        if: steps.diff.outputs.changed == 'true'
+        env:
+          OWNER: ${{ github.repository_owner }}
+          HAS_KEY: ${{ secrets.RELEASE_APP_PRIVATE_KEY != '' }}
+          HAS_BWS: ${{ secrets.BWS_ACCESS_TOKEN != '' }}
+        run: |
+          set -euo pipefail
+          pem_id=''
+          case "$OWNER" in
+            kirchDev)
+              client_id='Iv23li3hNqtsZ8fDlwqH'
+              pem_id='3a3459f0-c986-4ff3-a36b-b4550012d41e'
+              ;;
+            sirargonNet | kirch-ostendorf)
+              client_id='Iv23limtBZRLTqgEo3hn'
+              ;;
+            *)
+              client_id='Iv23li3hNqtsZ8fDlwqH'
+              pem_id='29f8317d-29f7-46af-834b-b4550012d477'
+              ;;
+          esac
+
+          if [ "$HAS_KEY" = 'true' ]; then
+            source='secret'
+          elif [ -z "$pem_id" ]; then
+            echo "::error::$OWNER has no Release App PEM in Bitwarden — pass it as the RELEASE_APP_PRIVATE_KEY secret."
+            exit 1
+          elif [ "$HAS_BWS" != 'true' ]; then
+            echo "::error::Neither RELEASE_APP_PRIVATE_KEY nor BWS_ACCESS_TOKEN is set (or one is empty) — the App key cannot be read."
+            exit 1
+          else
+            source='bitwarden'
+          fi
+
+          echo "client-id=$client_id" >> "$GITHUB_OUTPUT"
+          echo "pem-id=$pem_id" >> "$GITHUB_OUTPUT"
+          echo "key-source=$source" >> "$GITHUB_OUTPUT"
+
+      - name: Fetch App PEM from Bitwarden
+        if: steps.app.outputs.key-source == 'bitwarden'
+        uses: bitwarden/sm-action@1238aae8fc64b212641190a9227c8a734ab1a793 # v3.0.1
+        with:
+          access_token: ${{ secrets.BWS_ACCESS_TOKEN }}
+          cloud_region: eu
+          secrets: |
+            ${{ steps.app.outputs.pem-id }} > RELEASE_APP_PEM
+
+      - name: Mint the App token
+        id: app-token
+        if: steps.diff.outputs.changed == 'true'
+        uses: actions/create-github-app-token@f418cff399f7aef4c2f0ad47e25ca7a6abbdd6fc # v3.4.0
+        with:
+          client-id: ${{ steps.app.outputs.client-id }}
+          private-key: ${{ steps.app.outputs.key-source == 'secret' && secrets.RELEASE_APP_PRIVATE_KEY || env.RELEASE_APP_PEM }}
+
+      # `sign-commits: true` writes the commit through the API, which GitHub
+      # signs server-side — both protected branches reject an unsigned one.
+      - name: Open or update the pull request
+        if: steps.diff.outputs.changed == 'true'
+        uses: peter-evans/create-pull-request@3ffccacd46053766916f087ce41d627c0b8cf2d1 # v8.1.3
+        with:
+          token: ${{ steps.app-token.outputs.token }}
+          sign-commits: true
+          branch: ${{ inputs.branch }}
+          base: ${{ steps.topology.outputs.branch }}
+          add-paths: ${{ inputs.paths }}
+          commit-message: ${{ inputs.title }}
+          title: ${{ inputs.title }}
+          body: ${{ inputs.body }}
+          assignees: ${{ inputs.assignees }}
+
+      - name: Summary
+        if: always()
+        env:
+          PRESENT: ${{ steps.lock.outputs.present }}
+          CHANGED: ${{ steps.diff.outputs.changed }}
+          BRANCH: ${{ inputs.branch }}
+          BASE: ${{ steps.topology.outputs.branch }}
+        run: |
+          {
+            if [ "$PRESENT" = "false" ]; then
+              echo "## No project skills"
+              echo ""
+              echo "This repo has no \`skills-lock.json\`, so there is nothing to update."
+            elif [ "$CHANGED" = "true" ]; then
+              echo "## Skills updated"
+              echo ""
+              echo "A pull request from \`$BRANCH\` into \`$BASE\` carries the update."
+            else
+              echo "## Up to date"
+              echo ""
+              echo "The project skills already match their sources."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
