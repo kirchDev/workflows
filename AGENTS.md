@@ -1,18 +1,4 @@
-# CLAUDE.md
-
-This file provides guidance to AI coding agents — Claude Code (claude.ai/code) and vendor-neutral tools such as Codex, OpenCode, Cursor, and Copilot — when working with code in this repository.
-
-## Agent instruction files
-
-`CLAUDE.md` and `AGENTS.md` are kept **byte-identical**. `CLAUDE.md` is what Claude Code reads; `AGENTS.md` is what vendor-neutral agent tools read — Codex, OpenCode, Cursor, Copilot, and whatever follows them. Two real files, deliberately not a symlink: not every tool resolves one.
-
-**After editing either file, copy it over the other — don't repeat the edit by hand:**
-
-```bash
-cp CLAUDE.md AGENTS.md   # or the reverse, whichever you just edited
-```
-
-Retyping a change is exactly how the two drift; one reflowed line or reworded clause is enough. `diff CLAUDE.md AGENTS.md` must print nothing. If it ever does, treat it as a defect and fix it by letting one file win wholesale — never by merging them.
+# kirchDev/workflows
 
 ## What this repo is
 
@@ -59,7 +45,7 @@ There is no test suite — this is config-only. CI derives its checks from the `
 - **Node 26, pnpm 12.** Pinned via `.nvmrc`, `engines`, and `packageManager`. `pnpm-workspace.yaml` enforces `minimumReleaseAge=4320` (3-day cooldown), isolated node-linker. Don't loosen these without reason. Package-manager enforcement carries no key on purpose: pnpm 11 replaced `packageManagerStrict`/`packageManagerStrictVersion` with `pmOnFail`, whose default `download` already errors on a foreign package manager and fetches the pinned pnpm version — every other value only weakens it, so leave it unset (the rationale sits as a comment in the file).
 - **oxc, not eslint/prettier.** Linting via `oxlint`, formatting via `oxfmt`. Configs live in `.oxlintrc.json` / `.oxfmtrc.json`. `oxlint` uses `unicorn` + `oxc` plugins; rules deliberately minimal.
 - **TypeScript, no build step.** The meta scripts and the three tool configs are `.ts` — Node 26 strips types natively, so `scripts/check-policy-parity.ts`, `commitlint.config.ts`, `lint-staged.config.ts` and `taze.config.ts` stay directly executable and each tool loads its own `.ts` config unaided. `tsconfig.json` is `noEmit` + `strict` + `erasableSyntaxOnly`, so only strippable syntax (no enums, no parameter properties) can be written; `pnpm typecheck` is the gate. TypeScript covers the meta layer only — there is no application code here, and the workflows themselves are YAML, which `tsc` never sees. Checking them is `actionlint`'s job.
-- **Husky hooks** (`.husky/pre-commit`, `.husky/commit-msg`) run `lint-staged` and `commitlint`. `lint-staged.config.ts` excludes `README.md`, `CLAUDE.md`, and `AGENTS.md` (free-form prose) and `pnpm-lock.yaml`. `oxlint --fix --deny-warnings` then `oxfmt` on JS/TS; `oxfmt` only on JSON/YAML/MD.
+- **Husky hooks** (`.husky/pre-commit`, `.husky/commit-msg`) run `lint-staged` and `commitlint`. `lint-staged.config.ts` excludes `README.md` and `AGENTS.md` (free-form prose) and `pnpm-lock.yaml`. `oxlint --fix --deny-warnings` then `oxfmt` on JS/TS; `oxfmt` only on JSON/YAML/MD.
 - **Conventional Commits enforced** via `@commitlint/config-conventional`. Don't `--no-verify` unless explicitly asked.
 - **The moving major alias is opt-in, and off by default.** Confirmed in production: `gitignore-sync` cut `v0.1.0` and its `v0` tag moved onto it. release-please cuts exact tags only — `v0.1.0`, never `v0` — so `_release-please.yml` can move `v<major>` onto each release itself, force-pushing that one tag. Moving a tag is normally the thing not to do; an alias is the case where moving it *is* the contract, since it names a major line rather than a release. But **only two repos in the estate have anyone pinning their tags** — this one and `coverage-report` — so the default is `false`: for an npm package the npm version is what resolves, and for the three Terraform providers an extra `v1` is a hazard rather than a no-op, since the Registry reads tags as its version list and `v1` is not valid semver.
 - **release-please cuts the tags callers pin.** Files: `release-please-config.json`, `.release-please-manifest.json`, `.github/workflows/release-please.yml`. Config uses `release-type: node` with `include-v-in-tag: true`, bumping a `"private": true` `package.json` that is never published — the version exists to name the tag. Open point inherited from the build brief: `simple` would be the language-neutral choice and would stop pretending there is a package. Either is defensible; what is not is changing it after callers have pinned tags.
