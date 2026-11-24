@@ -61,7 +61,7 @@ jobs:
         with:
           name: ${{ inputs.artifact }}
 
-      - uses: kirchDev/coverage-report@f2e83d922e6406b97437c2f90c68eae941656f22 # v0.3.0
+      - uses: kirchDev/coverage-report@445c5909244f6a9b7154087eb416e9b20d555d46 # v0.4.0
         with:
           reports: ${{ inputs.reports }}
           min-patch: ${{ inputs.min-patch }}
