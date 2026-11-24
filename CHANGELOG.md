@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.19.0](https://github.com/kirchDev/workflows/compare/v0.18.0...v0.19.0) (2026-11-24)
+
+
+### Features
+
+* **skills-update:** refresh the project agent skills into the integration branch ([449caad](https://github.com/kirchDev/workflows/commit/449caad62ccc32cfba97a861c39f8b2199ceafdb))
+
+
+### Bug Fixes
+
+* **ci-check:** run every check before failing the gate ([8e44423](https://github.com/kirchDev/workflows/commit/8e44423201e3508ada827f0ca6721aa9b09ef77d))
+* **codeql:** skip the analysis on draft pull requests ([c79655a](https://github.com/kirchDev/workflows/commit/c79655abcb0d6f27b671cee01b4dda3fa68597ca))
+* **deps:** move the bodies' action pins to their current releases ([b42af5c](https://github.com/kirchDev/workflows/commit/b42af5c078ff6800d85f16ada729964dcad0deed))
+
 ## [0.18.0](https://github.com/kirchDev/workflows/compare/v0.17.0...v0.18.0) (2026-11-02)
 
 
