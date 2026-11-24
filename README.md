@@ -409,6 +409,9 @@ So a repo that needs a body plus one extra step writes its own job instead of fo
 
 </details>
 
+<details>
+<summary>Monorepo inputs, Rust toolchains and Gradle projects</summary>
+
 ### Monorepo checks and caches
 
 `_ci-check.yml`, `_ci-rust.yml` and `_ci-gradle.yml` accept `gate: false` when
@@ -469,6 +472,8 @@ runs may write the cache; fork PRs only read. Trigger a caller on the integratio
 branch to populate caches for new PRs. The body preserves failed test reports and
 reports a stable `Gate`; `gradle-smoke.yml` exercises it against a pinned wrapper
 and a minimal fixture on every PR and integration push.
+
+</details>
 
 ## 🤝 Contributing
 
