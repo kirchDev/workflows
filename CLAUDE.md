@@ -181,10 +181,13 @@ A body has no trigger of its own, so this repo needs a stub like anybody else. I
 | `_ci-check.yml`          |          11 |        ~8 | pins, and a step list that duplicates `package.json`       | ✅ reusable |
 | `_cleanup-sync-branch.yml` |        2 |        1 | a two-line comment, and nothing else                        | ✅ reusable |
 | `_open-regenerated-pr.yml` |        4 |        3 | three implementations of one rule, plus one repo that gave up | ✅ reusable |
+| `_skills-update.yml`     |           1 |        1 | none — lifted from `sirargon-net`, which needed a re-dispatch job to get its PR into `dev` | ✅ reusable |
 | `_ci-node.yml` / `_ci-laravel.yml` / `_ci-go.yml` / `_ci-rust.yml` | 11 | 13 | genuinely stack-dependent — one body per family | ✅ reusable |
 | `ci.yml` (the three outliers) |     3 |        3 | `app`, `gildstone`, `infrastructure` compose from bodies    | ✅ composed |
 
 **The rollout is complete: all 25 repos call the bodies.** What stayed behind was checked one by one rather than assumed, and each remaining workflow is a single instance shaped like its repo — `app`'s `cv-pdf`, `og-image` and `deploy`, `glimpse`'s experiment releases, `infrastructure`'s label sync, `skills`' conformance run, `hike-recap`'s renderer. The one duplicate that turned up in that sweep became `_cleanup-sync-branch.yml`.
+
+**`_skills-update.yml` is written ahead of its second caller**, like the other exceptions below: every repo that installs project skills via skills.sh needs the same weekly refresh, and `sirargon-net`'s version shows what the first copy costs — an `_open-regenerated-pr.yml` call that bases its PR on the branch it runs on, so a `schedule` (always the default branch) had to re-dispatch itself onto `dev`. The body derives the integration branch the way `_fast-forward-queue.yml` does, so the stub is a bare trigger, and a repo without `skills-lock.json` gets a green no-op. It deliberately does not nest `_open-regenerated-pr.yml`: a body naming another body has to hard-code its ref, the same pin that lies which keeps the composite action out of the bodies.
 
 **Where the abstraction deliberately stops, measured rather than assumed:**
 

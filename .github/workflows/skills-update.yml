@@ -1,0 +1,23 @@
+# yaml-language-server: $schema=https://json.schemastore.org/github-workflow.json
+
+# This repo's own stub — the same file every other repo carries, except that it
+# calls the body by local path. The body targets `dev` on its own, so the
+# schedule needs no re-dispatch onto the integration branch. This repo has no
+# `skills-lock.json` yet, so here it is a green no-op that still exercises the
+# branch resolution and the checkout.
+name: Skills update
+
+on:
+  schedule:
+    - cron: '23 5 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  skills-update:
+    name: Skills update
+    uses: ./.github/workflows/_skills-update.yml
+    secrets:
+      BWS_ACCESS_TOKEN: ${{ secrets.BWS_ACCESS_TOKEN }}
