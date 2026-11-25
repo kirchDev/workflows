@@ -14,32 +14,20 @@
     }
   ],
   "commit": {
-    "language": "en",
-    "scopes": "auto"
+    "language": "en"
   },
   "pr": {
-    "base": "dev",
-    "title": {
-      "convention": "conventional"
-    }
+    "base": "dev"
   },
   "release": {
     "promote": "auto",
-    "stages": ["dev", "main"],
-    "timeout": 600
+    "stages": ["dev", "main"]
   },
   "mergeDeps": {
     "merge": "grouped"
   },
-  "pruneBranches": {
-    "age": 90,
-    "protect": []
-  },
   "issue": {
     "tracker": "github",
-    "title": {
-      "convention": "plain"
-    },
     "labels": {
       "exclude": ["stack:*", "autorelease:*", "dependencies"]
     },
@@ -53,9 +41,7 @@
   },
   "work": {
     "tracker": "github",
-    "cap": 10,
     "branch": "branch:dev",
-    "parallel": false,
     "labels": {
       "ready": "ai: ready",
       "working": "ai: working",
@@ -67,9 +53,6 @@
       "blocked": "ai: blocked",
       "repo": false,
       "needsTriage": "needs triage"
-    },
-    "review": {
-      "maxRounds": 3
     },
     "priorityLabels": [
       "priority: urgent",

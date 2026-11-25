@@ -249,7 +249,7 @@ jobs:
 
       - name: Set up Rust
         if: steps.toolchain.outputs.source == ''
-        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
+        uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
         with:
           components: ${{ inputs.components }}
 

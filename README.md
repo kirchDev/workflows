@@ -56,10 +56,10 @@ Then delete the body that used to live in that file. Nothing else moves. List `s
 
 A **body** is prefixed with `_` and runs only via `workflow_call`. Anything without the prefix is an ordinary workflow — including this repo's own stubs.
 
-Nineteen bodies in four groups: **branch flow** (`_promotion-pr.yml`, `_queue-branch.yml`, `_fast-forward-queue.yml`), **releasing** (`_release-please.yml`, `_publish-npm.yml`, `_publish-goreleaser.yml`), **CI** (`_ci-check.yml`, plus one body per stack — Node, Laravel, Go, OpenTofu, Rust, E2E, Lighthouse), and **reporting and short-circuits** (`_codeql.yml`, `_coverage.yml`, `_verified.yml`, `_record-verified.yml`, `_detect-changes.yml`, `_record-area-fingerprints.yml`).
+26 bodies in six groups: **branch flow** (`_promotion-pr.yml`, `_queue-branch.yml`, `_fast-forward-queue.yml`), **releasing** (`_release-please.yml`, `_publish-npm.yml`, `_publish-goreleaser.yml`), **deploying** (`_deploy-forge.yml`, `_deploy-wrangler.yml`), **CI** (`_ci-check.yml`, plus one body per stack — Node, Laravel, Go, OpenTofu, Rust, Gradle, E2E, Lighthouse), **reporting and short-circuits** (`_codeql.yml`, `_coverage.yml`, `_verified.yml`, `_record-verified.yml`, `_detect-changes.yml`, `_record-area-fingerprints.yml`), and **upkeep** (`_open-regenerated-pr.yml`, `_skills-update.yml`, `_cleanup-sync-branch.yml`).
 
 <details>
-<summary>All 19 bodies, and why <code>ci.yml</code> is not one of them</summary>
+<summary>All 26 bodies, and why <code>ci.yml</code> is not one of them</summary>
 
 | Body                      | What it does                                            | Status      |
 | :------------------------ | :------------------------------------------------------ | :---------- |
@@ -70,6 +70,8 @@ Nineteen bodies in four groups: **branch flow** (`_promotion-pr.yml`, `_queue-br
 | `_release-please.yml`     | Release PRs and tags                                    | ✅ reusable |
 | `_publish-npm.yml`        | npm publish — stable from the tag, prerelease from a branch | ✅ reusable |
 | `_publish-goreleaser.yml` | Signed Terraform provider artifacts                     | ✅ reusable |
+| `_deploy-forge.yml`       | Laravel Forge deployment, with a `validate-secrets` job  | ✅ reusable |
+| `_deploy-wrangler.yml`    | Cloudflare Workers deployment via Wrangler               | ✅ reusable |
 | `_ci-check.yml`           | The gate 11 repos run, derived from `package.json`       | ✅ reusable |
 | `_verified.yml`           | Has this tree already passed? — outputs `skip`           | ✅ reusable |
 | `_record-verified.yml`    | Marks a tree verified once the caller's jobs are green   | ✅ reusable |
@@ -78,18 +80,21 @@ Nineteen bodies in four groups: **branch flow** (`_promotion-pr.yml`, `_queue-br
 | `_ci-node.yml`            | typecheck, test, build for Node libraries                | ✅ reusable |
 | `_ci-laravel.yml`         | Pest across PHP × Laravel, PostgreSQL, PCOV, Pint        | ✅ reusable |
 | `_ci-go.yml`              | gofmt, vet, golangci-lint, build, unit + acceptance      | ✅ reusable |
-| `_ci-tofu.yml`            | fmt, validate for OpenTofu                               | ✅ reusable |
+| `_ci-tofu.yml`            | fmt, validate, tflint, trivy for OpenTofu                | ✅ reusable |
 | `_ci-e2e.yml`             | Playwright against a real backend, with browser cache    | ✅ reusable |
 | `_ci-lighthouse.yml`      | Sharded Lighthouse audit, one runner per page            | ✅ reusable |
 | `_ci-rust.yml`            | Toolchain, cached build, fmt, clippy, tests, cargo-deny  | ✅ reusable |
+| `_ci-gradle.yml`          | The repository's Gradle wrapper on Temurin, with caches  | ✅ reusable |
 | `_coverage.yml`           | One sticky comment via `kirchDev/coverage-report`        | ✅ reusable |
 | `_skills-update.yml`      | Refreshes the skills.sh project skills, PR into the integration branch | ✅ reusable |
+| `_open-regenerated-pr.yml` | Regenerates files and opens a PR only if they changed  | ✅ reusable |
+| `_cleanup-sync-branch.yml` | Deletes a bot's re-pointed sync branch after its PR merged | ✅ reusable |
 
 `ci.yml` is the one workflow that does not become a single body. Its 24 variants are four families — 11 repos running one gate, 5 Node libraries, 2 Laravel packages, 3 Terraform providers — plus three repos with pipelines of their own. Every family now has its body, and the three outliers compose from the pieces rather than hand over their pipeline.
 
 Two bodies were written **ahead of their second caller**, against this repo's usual rule. `app` has Lighthouse and no E2E; `gildstone` has E2E — already as a local `workflow_call` body — and no Lighthouse. They are the same gattung (Laravel plus a JS frontend), so each holds the half the other is missing. `oggsbreinig` is a third repo of that shape with no `ci.yml` yet, and `saas-template` exists to produce more. Waiting there would mean the third repo starts by copying eighty lines.
 
-What stays repo-owned: the **deploy jobs** in `app`, `infrastructure`, `linear-github-sync` and `discord-presence-bot`.
+What stays repo-owned: `infrastructure`'s `plan` and `apply` — every other deploy calls `_deploy-forge.yml` or `_deploy-wrangler.yml`.
 
 </details>
 
@@ -99,7 +104,7 @@ What stays repo-owned: the **deploy jobs** in `app`, `infrastructure`, `linear-g
 - **🧭 Topology detection** — the promotion PR finds its own target by asking whether a `stage` branch exists. No flag, no second variant.
 - **🛡️ Pinned by SHA** — callers pin a commit, so a push here reaches nobody until a bump PR is reviewed and merged.
 - **🔐 Named secrets** — a stub hands over exactly what its body needs, never `secrets: inherit`.
-- **🧪 Dogfooded** — this repo carries the same stub as everyone else and calls its own bodies by local path, so a broken body fails here first.
+- **🧪 Dogfooded** — this repo carries the same stubs as everyone else and calls its own bodies by local path, so a broken body it can run here fails here first.
 
 ## 🔁 Promotion PR & branch topology
 
@@ -237,7 +242,9 @@ Which body a repo composes on:
 | nothing | 10 | — | — |
 | npm | 4 | `_publish-npm.yml` | `tag-name`, `NPM_TOKEN` |
 | Terraform registry | 3 | `_publish-goreleaser.yml` | `tag-name`, `BWS_ACCESS_TOKEN` |
-| a deployment | 4 | own job | — |
+| Laravel Forge | 2 | `_deploy-forge.yml` | `forge_*`, mapped from `<PREFIX>_FORGE_*` |
+| Cloudflare Workers | 1 | `_deploy-wrangler.yml` | `BWS_ACCESS_TOKEN` |
+| `infrastructure` | 1 | own job | — |
 
 > [!IMPORTANT]
 > Two of the four npm repos were missing the prerelease-version fix the other two carry: because release-please bumps the version on `main` only, a `dev` branch published a version semver ranked **below** the latest release, so `@dev` resolved to something older than `@latest`. The body derives the base from the last published release instead. Migrating `forgemap` and `envprism` onto it is a fix, not a port.
@@ -290,7 +297,7 @@ A repo whose checks download remote sources — a Nuxt Content site reading `rep
       remote-source-cache-command: node ./bin/duxt-cache-key.mjs --github >> "$GITHUB_OUTPUT"
 ```
 
-The command appends `cacheable`, `key` and a multi-line `paths` to `$GITHUB_OUTPUT`; the body restores and saves those paths with `actions/cache` under that exact key, and skips both unless `cacheable` is `true`. Left empty, which is the default, nothing runs. The gate runs on pull requests only, so a hit across pull requests comes from the default branch's own writer running the identical command.
+The command appends `cacheable`, `key` and a multi-line `paths` to `$GITHUB_OUTPUT`; the body restores and saves those paths with `actions/cache` under that exact key, and skips both unless `cacheable` is `true`. Left empty, which is the default, nothing runs. A cache saved by a pull request serves only that pull request's reruns, so a hit across pull requests needs a writer on the default branch — a caller's `push` run, or the default branch's own workflow — running the identical command.
 
 A repo whose gate also chains a Gradle build asks for a JDK, the same way a Laravel repo asks for PHP with `setup-php`:
 
@@ -402,24 +409,8 @@ So a repo that needs a body plus one extra step writes its own job instead of fo
 
 </details>
 
-## 🤝 Contributing
-
-PRs welcome. Conventional Commits required (enforced via commitlint). Husky runs the project's linters/formatters on `git commit`.
-
-> [!TIP]
-> Run `pnpm check:fix` before pushing — CI will catch what husky missed.
-
-See [CONTRIBUTING.md](CONTRIBUTING.md) for the full workflow.
-
-## 🛣️ Versioning
-
-[Semantic Versioning](https://semver.org/) via [release-please](https://github.com/googleapis/release-please) — see [CHANGELOG.md](CHANGELOG.md).
-
-Here the tags are the interface: every caller pins one, so a release is never cosmetic and a tag is never moved or deleted once published.
-
-## 📄 License
-
-[MIT](LICENSE) © [Titus Kirch](https://github.com/TitusKirch/) / [IT-Dienstleistungen Titus Kirch](https://kirch.dev)
+<details>
+<summary>Monorepo inputs, Rust toolchains and Gradle projects</summary>
 
 ### Monorepo checks and caches
 
@@ -473,7 +464,7 @@ task list fails. Optional `node-version` enables pnpm and Node setup, and
 compiler inputs. Preparation receives a read-only repository token.
 
 The named `GRADLE_ENCRYPTION_KEY` secret supplies Gradle's configuration-cache
-encryption key. In the pinned `setup-gradle` v6.4.0, persisting that project cache
+encryption key. In the pinned `setup-gradle` (v6.4.1), persisting that project cache
 also requires the action's separate opt-in/licensing; the key alone does not
 enable it ([upstream contract](https://github.com/gradle/actions/blob/b9bee63ef481cc545e4517ec730544a4d8b1dfa0/sources/src/cache-service.ts)).
 Dependency and task caches work independently. Trusted branch and same-repo PR
@@ -481,3 +472,24 @@ runs may write the cache; fork PRs only read. Trigger a caller on the integratio
 branch to populate caches for new PRs. The body preserves failed test reports and
 reports a stable `Gate`; `gradle-smoke.yml` exercises it against a pinned wrapper
 and a minimal fixture on every PR and integration push.
+
+</details>
+
+## 🤝 Contributing
+
+PRs welcome. Conventional Commits required (enforced via commitlint). Husky runs the project's linters/formatters on `git commit`.
+
+> [!TIP]
+> Run `pnpm check:fix` before pushing — CI will catch what husky missed.
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the full workflow.
+
+## 🛣️ Versioning
+
+[Semantic Versioning](https://semver.org/) via [release-please](https://github.com/googleapis/release-please) — see [CHANGELOG.md](CHANGELOG.md).
+
+Here the tags are the interface: every caller pins one, so a release is never cosmetic and a tag is never moved or deleted once published.
+
+## 📄 License
+
+[MIT](LICENSE) © [Titus Kirch](https://github.com/TitusKirch/) / [IT-Dienstleistungen Titus Kirch](https://kirch.dev)
