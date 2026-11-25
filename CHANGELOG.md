@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.19.2](https://github.com/kirchDev/workflows/compare/v0.19.1...v0.19.2) (2026-11-25)
+
+
+### Bug Fixes
+
+* **ci-go:** default golangci-lint to v2.15.0 ([b54bf0f](https://github.com/kirchDev/workflows/commit/b54bf0f761097858a63d0f61cd9d00edb79c088c))
+* **ci-rust:** move the rust-toolchain pin to the current stable head ([87271f8](https://github.com/kirchDev/workflows/commit/87271f8fc333316df68f6fc24aafd0da6627fbac))
+
 ## [0.19.1](https://github.com/kirchDev/workflows/compare/v0.19.0...v0.19.1) (2026-11-24)
 
 
