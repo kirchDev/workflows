@@ -105,16 +105,36 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
         run: |
           set -euo pipefail
 
           # The OPEN PR is the marker, not the branch: a queue branch whose PR
           # has landed is done, and its branch may well still exist.
-          open=$(gh pr list --state open --base "$INTEGRATION_BRANCH" \
-            --json headRefName \
-            --jq '[.[] | select(.headRefName | startswith(env.QUEUE_BRANCH_PREFIX))] | .[0].headRefName // ""')
+          #
+          # EVERY page, and only this repository's branches. `gh pr list` stops
+          # at 30 PRs, so a queue PR further down read as "none open" and a
+          # second queue branch was cut beside it; and a fork can name its
+          # branch ai/queue-* too — retargeting onto that would point a worker
+          # PR at a branch that does not exist here. A read that fails stops
+          # the job instead of reading as "none open".
+          if ! open=$(gh api --paginate \
+            "repos/$GH_REPO/pulls?state=open&base=$INTEGRATION_BRANCH&per_page=100" \
+            --jq '.[] | select(.head.repo.full_name == env.GH_REPO and (.head.ref | startswith(env.QUEUE_BRANCH_PREFIX))) | .head.ref'); then
+            echo "::error::Could not list the open pull requests into $INTEGRATION_BRANCH."
+            exit 1
+          fi
+          count=$(printf '%s' "$open" | grep -c . || true)
 
-          if [ -n "$open" ]; then
+          # Two open queue branches leave no right answer: either one would
+          # split the drain across two queue PRs. Stop and say which, rather
+          # than pick the first.
+          if [ "$count" -gt 1 ]; then
+            echo "::error::$count queue PRs are open into $INTEGRATION_BRANCH ($(printf '%s' "$open" | paste -sd, -)) — close all but one. PR #$PR stays on $INTEGRATION_BRANCH until then."
+            exit 1
+          fi
+
+          if [ "$count" -eq 1 ]; then
             echo "Queue branch $open is already open — retargeting onto it."
             echo "branch=$open" >> "$GITHUB_OUTPUT"
             echo "create=false" >> "$GITHUB_OUTPUT"
