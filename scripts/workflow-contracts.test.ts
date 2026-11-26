@@ -808,3 +808,139 @@ test('recording writes one status per named area and refuses malformed input', (
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+// A stand-in for `gh` that answers from fixture files the way the real one
+// does: `--paginate` reads every page (`<name>.json`, `<name>.2.json`), a page
+// read without it stops at the first, `--jq` runs per page, and `<name>.fail`
+// turns the call into an error with no JSON on stdout.
+const FAKE_GH = [
+  '#!/usr/bin/env bash',
+  'set -euo pipefail',
+  'echo "$*" >> "$FAKE/calls"',
+  'jqexpr=',
+  'paginate=false',
+  'args=()',
+  'while [ $# -gt 0 ]; do',
+  '  case "$1" in',
+  '  --jq) jqexpr=$2; shift 2 ;;',
+  '  --paginate) paginate=true; shift ;;',
+  '  *) args+=("$1"); shift ;;',
+  '  esac',
+  'done',
+  'respond() {',
+  '  if [ -e "$FAKE/$1.fail" ]; then echo "HTTP 502: Bad Gateway" >&2; exit 1; fi',
+  '  pages=("$FAKE/$1.json")',
+  '  if [ "$paginate" = true ] && [ -e "$FAKE/$1.2.json" ]; then pages+=("$FAKE/$1.2.json"); fi',
+  '  for page in "${pages[@]}"; do',
+  '    if [ -n "$jqexpr" ]; then jq -r "$jqexpr" "$page"; else cat "$page"; fi',
+  '  done',
+  '  exit "$(cat "$FAKE/$1.exit" 2>/dev/null || echo 0)"',
+  '}',
+  'case "${args[*]}" in',
+  '"api repos/o/r/pulls?"*) respond pulls ;;',
+  '"api repos/o/r/pulls/"*"/reviews") respond reviews ;;',
+  '"api repos/o/r/rules/branches/"*) respond rules ;;',
+  '"api repos/o/r/branches/"*) respond branch ;;',
+  '"api repos/o/r/git/ref/heads/"*) respond tip ;;',
+  '"api repos/o/r/collaborators/"*) respond permission ;;',
+  '"pr view "*) respond view ;;',
+  '"pr checks "*) respond checks ;;',
+  '*) echo "unexpected gh call: $*" >&2; exit 2 ;;',
+  'esac',
+  ''
+].join('\n');
+
+function queueStep(
+  file: string,
+  name: string,
+  fixtures: Record<string, unknown>,
+  env: Record<string, string> = {}
+) {
+  const root = mkdtempSync(join(tmpdir(), 'workflow-queue-'));
+  const output = join(root, 'output');
+  writeFileSync(output, '');
+  writeFileSync(join(root, 'calls'), '');
+  writeFileSync(join(root, 'gh'), FAKE_GH, { mode: 0o755 });
+  for (const [key, value] of Object.entries(fixtures)) {
+    if (value === undefined) continue;
+    if (key.endsWith('.fail')) writeFileSync(join(root, key), '');
+    else if (key.endsWith('.exit'))
+      writeFileSync(join(root, key), String(value));
+    else writeFileSync(join(root, `${key}.json`), JSON.stringify(value));
+  }
+  try {
+    const run = spawnSync('bash', ['-c', script(name, file)], {
+      env: {
+        ...process.env,
+        PATH: `${root}:${process.env.PATH}`,
+        FAKE: root,
+        GH_REPO: 'o/r',
+        QUEUE_BRANCH_PREFIX: 'ai/queue-',
+        INTEGRATION_BRANCH: 'dev',
+        GITHUB_OUTPUT: output,
+        ...env
+      },
+      encoding: 'utf8'
+    });
+    return {
+      status: run.status,
+      log: run.stdout + run.stderr,
+      output: readFileSync(output, 'utf8').trim(),
+      calls: readFileSync(join(root, 'calls'), 'utf8')
+    };
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+}
+
+const pull = (number: number, ref: string, repo: string | null = 'o/r') => ({
+  number,
+  head: { ref, repo: repo === null ? null : { full_name: repo } }
+});
+
+test('the queue branch is found on any page, only in this repository, and two stop the cut', () => {
+  const tip = 'abcdef0123456789abcdef0123456789abcdef01';
+  const step = (fixtures: Record<string, unknown>) =>
+    queueStep(
+      '_queue-branch.yml',
+      'Is a queue branch already open?',
+      { tip: { object: { sha: tip } }, ...fixtures },
+      { PR: '5' }
+    );
+
+  const none = step({ pulls: [pull(4, 'ai/queue/inf-1-worker')] });
+  assert.equal(none.status, 0, none.log);
+  assert.equal(none.output, `branch=ai/queue-abcdef0\nsha=${tip}\ncreate=true`);
+
+  const one = step({ pulls: [pull(3, 'ai/queue-1111111')] });
+  assert.equal(one.status, 0, one.log);
+  assert.equal(one.output, 'branch=ai/queue-1111111\ncreate=false');
+
+  const two = step({
+    pulls: [pull(3, 'ai/queue-1111111'), pull(8, 'ai/queue-2222222')]
+  });
+  assert.equal(two.status, 1);
+  assert.equal(two.output, '');
+  assert.match(two.log, /::error::2 queue PRs are open into dev/);
+
+  const fork = step({
+    pulls: [
+      pull(3, 'ai/queue-2222222', 'fork/r'),
+      pull(6, 'ai/queue-3333333', null)
+    ]
+  });
+  assert.equal(fork.status, 0, fork.log);
+  assert.match(fork.output, /create=true$/);
+
+  const pageTwo = step({
+    pulls: [pull(1, 'feat/a')],
+    'pulls.2': [pull(150, 'ai/queue-4444444')]
+  });
+  assert.equal(pageTwo.status, 0, pageTwo.log);
+  assert.equal(pageTwo.output, 'branch=ai/queue-4444444\ncreate=false');
+
+  const failed = step({ 'pulls.fail': true });
+  assert.equal(failed.status, 1);
+  assert.equal(failed.output, '');
+  assert.match(failed.log, /::error::Could not list/);
+});
