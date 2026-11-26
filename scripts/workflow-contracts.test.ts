@@ -1066,3 +1066,102 @@ test('the landing considers exactly one queue PR of this repository, on any page
   assert.equal(injected.status, 1);
   assert.equal(injected.output, '');
 });
+
+test('the landing waits for every expected check from the PR itself and never lands on red', () => {
+  const lands = (fixtures: Record<string, unknown>) => {
+    const run = pick(fixtures);
+    assert.equal(run.status, 0, run.log);
+    assert.equal(run.output, `pr=7\nsha=${HEAD}`, run.log);
+  };
+  const waits = (fixtures: Record<string, unknown>, reason: RegExp) => {
+    const run = pick(fixtures);
+    assert.equal(run.status, 0, run.log);
+    assert.equal(run.output, '', run.log);
+    assert.match(run.log, reason);
+  };
+  const fails = (fixtures: Record<string, unknown>, reason: RegExp) => {
+    const run = pick(fixtures);
+    assert.equal(run.status, 1, run.log);
+    assert.equal(run.output, '');
+    assert.match(run.log, reason);
+  };
+
+  // A green, B not registered yet.
+  waits(
+    { rules: [required('CI / Gate', 'PHP / Gate')] },
+    /expected but not passed in this PR: PHP \/ Gate/
+  );
+  // A run that registers red later stops the landing, expected or not.
+  waits(
+    { checks: [row('CI / Gate', 'pass'), row('Lighthouse / summary', 'fail')] },
+    /red: Lighthouse \/ summary/
+  );
+  waits({ checks: [row('CI / Gate', 'cancel')] }, /red: CI \/ Gate/);
+  // Red CI without a draft gate is red, not "no checks".
+  waits({ checks: [row('CI / Gate', 'fail')] }, /red: CI \/ Gate/);
+  // The rows of a draft queue PR: its own Gate skipped, a push run green.
+  waits(
+    {
+      checks: [
+        row('CI / Gate', 'skipping'),
+        row('CI / Gate', 'pass', 'push'),
+        row('CI / Lint & Format', 'skipping')
+      ]
+    },
+    /expected but not passed in this PR: CI \/ Gate/
+  );
+  // A green push run alone is another context.
+  waits(
+    { checks: [row('CI / Gate', 'pass', 'push')] },
+    /expected but not passed in this PR: CI \/ Gate/
+  );
+  // `gh pr checks` signals pending with an exit code, not with missing JSON.
+  waits(
+    {
+      checks: [row('CI / Gate', 'pass'), row('CodeQL / Gate', 'pending')],
+      'checks.exit': 8
+    },
+    /pending: CodeQL \/ Gate/
+  );
+  // Nothing registered yet: gh errors, the rollup says empty.
+  waits(
+    { 'checks.fail': true, view: { ...landable.view, statusCheckRollup: [] } },
+    /expected but not passed in this PR: CI \/ Gate/
+  );
+
+  // A failed read is not "not green yet".
+  fails({ 'checks.fail': true }, /::error::Could not read the checks of PR #7/);
+  fails({ 'rules.fail': true }, /::error::Could not read the rules on dev/);
+  fails({ 'branch.fail': true }, /::error::Could not read the protection/);
+  // Without an expected check an unregistered one cannot be detected.
+  fails({ rules: [] }, /::error::No required status check applies to dev/);
+
+  // A commit status or another App's check has no event and counts as it reports.
+  lands({
+    rules: [required('CI / Gate', 'OpenTofu Plan')],
+    checks: [row('CI / Gate', 'pass'), row('OpenTofu Plan', 'pass', '')]
+  });
+  // A skipped check nobody requires is still fine, as is a push run beside the PR's.
+  lands({
+    checks: [
+      row('CI / Gate', 'pass'),
+      row('CI / Gate', 'pass', 'push'),
+      row('Queue Branch / Cut the queue branch', 'skipping')
+    ]
+  });
+  // Classic protection and duplicate rulesets name expected checks too.
+  lands({
+    rules: [],
+    branch: {
+      protection: { required_status_checks: { contexts: ['CI / Gate'] } }
+    }
+  });
+  lands({ rules: [required('CI / Gate'), required('CI / Gate')] });
+
+  // The earlier gates still hold.
+  waits({ reviews: [] }, /no approval on the current head/);
+  waits(
+    { view: { ...landable.view, isDraft: true } },
+    /not a ready PR into dev/
+  );
+});

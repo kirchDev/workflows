@@ -303,8 +303,8 @@ jobs:
       # with an empty input) looks for THE open queue PR. Anything that is not
       # an open, ready, green, APPROVED queue PR into the integration branch
       # leaves `pr` empty and the job ends green. What ends it red is what a
-      # human has to resolve: two open queue PRs or a read that failed —
-      # neither may pass for "not yet".
+      # human has to resolve: two open queue PRs, no expected check to wait
+      # for, or a read that failed — none of these may pass for "not yet".
       - name: Pick the queue PR
         id: pick
         env:
@@ -384,10 +384,79 @@ jobs:
             exit 0
           fi
 
-          # Green means every check, not just the required ones: the queue PR
-          # is the ONLY gate the drain's commits ever pass through.
-          if ! gh pr checks "$n"; then
-            echo "PR #$n: checks are not (yet) all green — skipping."
+          # THE EXPECTED CHECKS come from the integration branch's own rules,
+          # not from what happens to be visible. A check that has not
+          # registered yet is simply absent from the rollup, so "everything
+          # visible is green" passed while a second workflow had not started.
+          # The required checks are the ones every PR into this branch must
+          # report — the App bypasses the ruleset that requires them, which
+          # is exactly why they are enforced here. Path filters cannot hide
+          # one: a caller with a required check skips inside its body, where
+          # `Gate` still reports.
+          if ! ruleset=$(gh api --paginate "repos/$GH_REPO/rules/branches/$INTEGRATION_BRANCH?per_page=100" \
+            --jq '.[] | select(.type == "required_status_checks") | .parameters.required_status_checks[].context'); then
+            echo "::error::Could not read the rules on $INTEGRATION_BRANCH."
+            exit 1
+          fi
+          if ! protection=$(gh api "repos/$GH_REPO/branches/$INTEGRATION_BRANCH" \
+            --jq '(.protection.required_status_checks.contexts // [])[]'); then
+            echo "::error::Could not read the protection of $INTEGRATION_BRANCH."
+            exit 1
+          fi
+          expected=$(printf '%s\n%s\n' "$ruleset" "$protection" | jq -Rsc 'split("\n") | map(select(. != "")) | unique')
+
+          if [ "$expected" = '[]' ]; then
+            echo "::error::No required status check applies to $INTEGRATION_BRANCH, so a check that has not registered yet cannot be told from one that does not exist. Require the CI gates on $INTEGRATION_BRANCH."
+            exit 1
+          fi
+
+          # `gh pr checks` reads the PR's CURRENT head; the head-moved check
+          # below binds the answer to $sha. Its exit code is not the answer —
+          # it reports pending checks with one — so only a JSON array counts
+          # as a read. It also refuses an empty rollup with an error, which is
+          # told apart from a failed read by asking for the rollup itself.
+          rows=$(gh pr checks "$n" --json name,workflow,event,bucket) || true
+          if ! jq -en --argjson rows "$rows" '$rows | type == "array"' > /dev/null 2>&1; then
+            if ! registered=$(gh pr view "$n" --json statusCheckRollup --jq '.statusCheckRollup | length'); then
+              echo "::error::Could not read the checks of PR #$n."
+              exit 1
+            fi
+            if [ "$registered" != "0" ]; then
+              echo "::error::Could not read the checks of PR #$n ($registered registered)."
+              exit 1
+            fi
+            rows='[]'
+          fi
+
+          # Green means every visible check AND every expected one:
+          #
+          # - Red anywhere stays red, whatever run it came from — the queue
+          #   PR is the ONLY gate the drain's commits ever pass through.
+          # - An expected check needs a pass from the PR's own run, and no
+          #   other row of it may disagree. A `push` run on the same commit
+          #   is another context: it was green on the draft queue PR whose
+          #   own `Gate` had been skipped. A skipped expected check is not a
+          #   pass either — that skip IS the draft gate. A row with no event
+          #   is a commit status or another App's check, which has no run to
+          #   come from, and counts as it reports.
+          # - A pending check of any kind is waited for.
+          verdict=$(jq -nr --argjson rows "$rows" --argjson expected "$expected" '
+            def from_pr: (.event // "") as $e | $e == "" or ($e | startswith("pull_request"));
+            def names: map(.name) | unique | join(", ");
+            ($rows | map(select(.bucket == "fail" or .bucket == "cancel"))) as $red
+            | [ $expected[] as $e
+                | ($rows | map(select(.name == $e))) as $own
+                | select(($own | map(select(.bucket == "pass" and from_pr)) | length) == 0
+                    or ($own | any(.bucket != "pass")))
+                | $e ] as $unmet
+            | ($rows | map(select(.bucket == "pending"))) as $pending
+            | if ($red | length) > 0 then "red: \($red | names)"
+              elif ($unmet | length) > 0 then "expected but not passed in this PR: \($unmet | join(", "))"
+              elif ($pending | length) > 0 then "pending: \($pending | names)"
+              else "green" end')
+
+          if [ "$verdict" != "green" ]; then
+            echo "PR #$n: checks are not (yet) all green — $verdict. Skipping."
             exit 0
           fi
 

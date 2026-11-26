@@ -134,6 +134,9 @@ Both derive what the old copies configured by hand:
 | Integration branch | `env: INTEGRATION_BRANCH`, kept in step with the trigger by hand | read off the PR's base, or resolved from whether `dev` exists |
 | Bitwarden secret id | a literal per owner, wrong in four repos | `github.repository_owner` |
 | Queue branch prefix | `env:` in every copy, identical in all 47 | fixed in the body — estate policy, never per-repo |
+| Expected checks | whatever happened to be visible | the required status checks on the integration branch |
+
+**Green means every expected check, passed in the queue PR's own run.** `pick` reads the required checks of the integration branch from its rulesets and branch protection and waits until each has passed in a `pull_request` run; a skipped one, or one green only in a `push` run, does not count, and red anywhere stops the landing. A repo whose integration branch requires no check cannot land a queue PR — the job fails and says so, because a check that has not registered yet cannot be told from one that does not exist. Both bodies read every page of open PRs, count only this repository's branches, and stop with an error when two queue PRs are open; a dispatch naming one of them lands it.
 
 **The dispatch stays in the calling repo, and that is structural.** A reusable workflow cannot be dispatched — `workflow_call` is its only trigger — so the `workflow_dispatch` that lands a queue branch has to live in the stub. ADR-0008's human gate therefore provably remains in the repo it protects, while the 375 lines of picking, approval-checking and patching move here.
 
