@@ -190,8 +190,17 @@ jobs:
           BRANCH: ${{ github.ref_name }}
         run: |
           set -euo pipefail
-          existing=$(gh pr list --state open --base "$INTEGRATION_BRANCH" --head "$BRANCH" \
-            --json number --jq '.[0].number // empty')
+
+          # `head=<owner>:<branch>` narrows on the server to this repository's
+          # branch; `gh pr list --head` matches the branch NAME only, so a
+          # fork's PR from a branch called the same read as "already open" and
+          # the queue PR was never opened. The repo check repeats it here.
+          if ! existing=$(gh api --paginate \
+            "repos/$GH_REPO/pulls?state=open&base=$INTEGRATION_BRANCH&head=${GH_REPO%%/*}:$BRANCH&per_page=100" \
+            --jq '.[] | select(.head.repo.full_name == env.GH_REPO) | .number'); then
+            echo "::error::Could not list the open pull requests for $BRANCH."
+            exit 1
+          fi
           if [ -n "$existing" ]; then
             echo "PR #$existing is already open for $BRANCH — the push updated it."
             echo "create=false" >> "$GITHUB_OUTPUT"
@@ -268,9 +277,9 @@ jobs:
             --title "chore(queue): land $BRANCH on $INTEGRATION_BRANCH" \
             --body "$body"
 
-  # Re-checks every candidate against every condition below, so a wrong dispatch
-  # input, an unapproved PR or a red one ends the run green instead of landing
-  # something.
+  # Re-checks the candidate against every condition below, so a dispatch naming
+  # the wrong PR, an unapproved PR or a red one ends the run green instead of
+  # landing something.
   pick:
     name: Pick the queue PR
     needs: resolve
@@ -291,9 +300,11 @@ jobs:
       sha: ${{ steps.pick.outputs.sha }}
     steps:
       # A dispatch may name exactly one PR; every other trigger (and a dispatch
-      # with an empty input) considers every open queue PR. Anything that is not
+      # with an empty input) looks for THE open queue PR. Anything that is not
       # an open, ready, green, APPROVED queue PR into the integration branch
-      # leaves `pr` empty and the job ends green.
+      # leaves `pr` empty and the job ends green. What ends it red is what a
+      # human has to resolve: two open queue PRs, no expected check to wait
+      # for, or a read that failed — none of these may pass for "not yet".
       - name: Pick the queue PR
         id: pick
         env:
@@ -304,135 +315,225 @@ jobs:
           set -euo pipefail
 
           if [ -n "${INPUT_PR:-}" ]; then
-            candidates=$INPUT_PR
+            # Not echoed: a dispatch input is free text, and a newline in it
+            # would start a workflow command of its own.
+            case "$INPUT_PR" in
+            *[!0-9]*)
+              echo "::error::The dispatch input pr is not a PR number."
+              exit 1
+              ;;
+            esac
+            n=$INPUT_PR
           else
-            candidates=$(gh pr list --state open --base "$INTEGRATION_BRANCH" \
-              --json number,headRefName \
-              --jq '.[] | select(.headRefName | startswith(env.QUEUE_BRANCH_PREFIX)) | .number')
+            # EVERY page, and only this repository's branches — the same
+            # read _queue-branch.yml makes. `gh pr list` stops at 30 PRs, so
+            # a queue PR further down was never considered.
+            if ! open=$(gh api --paginate \
+              "repos/$GH_REPO/pulls?state=open&base=$INTEGRATION_BRANCH&per_page=100" \
+              --jq '.[] | select(.head.repo.full_name == env.GH_REPO and (.head.ref | startswith(env.QUEUE_BRANCH_PREFIX))) | "\(.number) \(.head.ref)"'); then
+              echo "::error::Could not list the open pull requests into $INTEGRATION_BRANCH."
+              exit 1
+            fi
+            count=$(printf '%s' "$open" | grep -c . || true)
+
+            if [ "$count" -eq 0 ]; then
+              echo "No open queue PR into $INTEGRATION_BRANCH — nothing to do."
+              exit 0
+            fi
+
+            # _queue-branch.yml keeps one queue branch open at a time, so a
+            # second one means something went wrong — and which one is meant
+            # to land is a human's call, made with a dispatch naming it.
+            if [ "$count" -gt 1 ]; then
+              echo "::error::$count queue PRs are open into $INTEGRATION_BRANCH ($(printf '%s' "$open" | sed 's/^/#/' | paste -sd, -)) — close all but one, or dispatch with the one to land."
+              exit 1
+            fi
+            n=${open%% *}
           fi
 
-          if [ -z "$candidates" ]; then
-            echo "No open queue PR into $INTEGRATION_BRANCH — nothing to do."
+          pr=$(gh pr view "$n" --json number,state,isDraft,baseRefName,headRefName,headRefOid,isCrossRepository)
+          state=$(printf '%s' "$pr" | jq -r '.state')
+          draft=$(printf '%s' "$pr" | jq -r '.isDraft')
+          base=$(printf '%s' "$pr" | jq -r '.baseRefName')
+          head=$(printf '%s' "$pr" | jq -r '.headRefName')
+          sha=$(printf '%s' "$pr" | jq -r '.headRefOid')
+          fork=$(printf '%s' "$pr" | jq -r '.isCrossRepository')
+
+          # The branch NAME alone is not the head-branch half of the bypass: a
+          # fork's branch can be called ai/queue-* just as well, and this
+          # pattern is meant to hold on a public repo too. Only a branch in
+          # this repository qualifies.
+          if [ "$fork" != "false" ]; then
+            echo "PR #$n: head is in a fork — skipping."
             exit 0
           fi
 
-          for n in $candidates; do
-            pr=$(gh pr view "$n" --json number,state,isDraft,baseRefName,headRefName,headRefOid,isCrossRepository)
-            state=$(printf '%s' "$pr" | jq -r '.state')
-            draft=$(printf '%s' "$pr" | jq -r '.isDraft')
-            base=$(printf '%s' "$pr" | jq -r '.baseRefName')
-            head=$(printf '%s' "$pr" | jq -r '.headRefName')
-            sha=$(printf '%s' "$pr" | jq -r '.headRefOid')
-            fork=$(printf '%s' "$pr" | jq -r '.isCrossRepository')
+          case "$head" in
+          "$QUEUE_BRANCH_PREFIX"*) ;;
+          *)
+            echo "PR #$n: head '$head' is not a queue branch — skipping."
+            exit 0
+            ;;
+          esac
 
-            # The branch NAME alone is not the head-branch half of the bypass: a
-            # fork's branch can be called ai/queue-* just as well, and this
-            # pattern is meant to hold on a public repo too. Only a branch in
-            # this repository qualifies.
-            if [ "$fork" != "false" ]; then
-              echo "PR #$n: head is in a fork — skipping."
-              continue
+          # A draft PR is OPEN — `isDraft` is a separate field, and skipping it
+          # would land a queue branch its author has explicitly marked as not
+          # ready. Draft is the drain's way of saying "not yet".
+          if [ "$state" != "OPEN" ] || [ "$draft" != "false" ] || [ "$base" != "$INTEGRATION_BRANCH" ]; then
+            echo "PR #$n: state=$state draft=$draft base=$base — not a ready PR into $INTEGRATION_BRANCH, skipping."
+            exit 0
+          fi
+
+          # THE EXPECTED CHECKS come from the integration branch's own rules,
+          # not from what happens to be visible. A check that has not
+          # registered yet is simply absent from the rollup, so "everything
+          # visible is green" passed while a second workflow had not started.
+          # The required checks are the ones every PR into this branch must
+          # report — the App bypasses the ruleset that requires them, which
+          # is exactly why they are enforced here. Path filters cannot hide
+          # one: a caller with a required check skips inside its body, where
+          # `Gate` still reports.
+          if ! ruleset=$(gh api --paginate "repos/$GH_REPO/rules/branches/$INTEGRATION_BRANCH?per_page=100" \
+            --jq '.[] | select(.type == "required_status_checks") | .parameters.required_status_checks[].context'); then
+            echo "::error::Could not read the rules on $INTEGRATION_BRANCH."
+            exit 1
+          fi
+          if ! protection=$(gh api "repos/$GH_REPO/branches/$INTEGRATION_BRANCH" \
+            --jq '(.protection.required_status_checks.contexts // [])[]'); then
+            echo "::error::Could not read the protection of $INTEGRATION_BRANCH."
+            exit 1
+          fi
+          expected=$(printf '%s\n%s\n' "$ruleset" "$protection" | jq -Rsc 'split("\n") | map(select(. != "")) | unique')
+
+          if [ "$expected" = '[]' ]; then
+            echo "::error::No required status check applies to $INTEGRATION_BRANCH, so a check that has not registered yet cannot be told from one that does not exist. Require the CI gates on $INTEGRATION_BRANCH."
+            exit 1
+          fi
+
+          # `gh pr checks` reads the PR's CURRENT head; the head-moved check
+          # below binds the answer to $sha. Its exit code is not the answer —
+          # it reports pending checks with one — so only a JSON array counts
+          # as a read. It also refuses an empty rollup with an error, which is
+          # told apart from a failed read by asking for the rollup itself.
+          rows=$(gh pr checks "$n" --json name,workflow,event,bucket) || true
+          if ! jq -en --argjson rows "$rows" '$rows | type == "array"' > /dev/null 2>&1; then
+            if ! registered=$(gh pr view "$n" --json statusCheckRollup --jq '.statusCheckRollup | length'); then
+              echo "::error::Could not read the checks of PR #$n."
+              exit 1
             fi
+            if [ "$registered" != "0" ]; then
+              echo "::error::Could not read the checks of PR #$n ($registered registered)."
+              exit 1
+            fi
+            rows='[]'
+          fi
 
-            case "$head" in
-            "$QUEUE_BRANCH_PREFIX"*) ;;
+          # Green means every visible check AND every expected one:
+          #
+          # - Red anywhere stays red, whatever run it came from — the queue
+          #   PR is the ONLY gate the drain's commits ever pass through.
+          # - An expected check needs a pass from the PR's own run, and no
+          #   other row of it may disagree. A `push` run on the same commit
+          #   is another context: it was green on the draft queue PR whose
+          #   own `Gate` had been skipped. A skipped expected check is not a
+          #   pass either — that skip IS the draft gate. A row with no event
+          #   is a commit status or another App's check, which has no run to
+          #   come from, and counts as it reports.
+          # - A pending check of any kind is waited for.
+          verdict=$(jq -nr --argjson rows "$rows" --argjson expected "$expected" '
+            def from_pr: (.event // "") as $e | $e == "" or ($e | startswith("pull_request"));
+            def names: map(.name) | unique | join(", ");
+            ($rows | map(select(.bucket == "fail" or .bucket == "cancel"))) as $red
+            | [ $expected[] as $e
+                | ($rows | map(select(.name == $e))) as $own
+                | select(($own | map(select(.bucket == "pass" and from_pr)) | length) == 0
+                    or ($own | any(.bucket != "pass")))
+                | $e ] as $unmet
+            | ($rows | map(select(.bucket == "pending"))) as $pending
+            | if ($red | length) > 0 then "red: \($red | names)"
+              elif ($unmet | length) > 0 then "expected but not passed in this PR: \($unmet | join(", "))"
+              elif ($pending | length) > 0 then "pending: \($pending | names)"
+              else "green" end')
+
+          if [ "$verdict" != "green" ]; then
+            echo "PR #$n: checks are not (yet) all green — $verdict. Skipping."
+            exit 0
+          fi
+
+          # THE HUMAN GATE. `reviewDecision` is deliberately not used: the
+          # merge-gate ruleset sets required_approving_review_count to 0, and
+          # GitHub reports reviewDecision as null wherever no review is
+          # required — however many approvals the PR actually carries. So the
+          # three things the platform would have checked are checked here:
+          # the latest review per author, the approval's freshness, and the
+          # approver's write access.
+          #
+          # --paginate emits one array per page, so `.[] | …` streams the
+          # reviews and `jq -s` collects them back into a single array.
+          reviews=$(gh api --paginate "repos/$GH_REPO/pulls/$n/reviews" \
+            --jq '.[] | {login: .user.login, state: .state, commit: .commit_id}' | jq -s '.')
+
+          # COMMENTED and DISMISSED reviews are dropped BEFORE the per-author
+          # reduction: a later comment must not clear an approval, and a
+          # dismissed review must not count as one. group_by is stable, so
+          # `last` is each author's most recent verdict.
+          latest=$(printf '%s' "$reviews" \
+            | jq -c '[.[] | select(.state == "APPROVED" or .state == "CHANGES_REQUESTED")]
+                     | group_by(.login) | map(last)')
+
+          if [ "$(printf '%s' "$latest" | jq -r '[.[] | select(.state == "CHANGES_REQUESTED")] | length')" != "0" ]; then
+            echo "PR #$n: changes are requested — skipping."
+            exit 0
+          fi
+
+          # An approval names the commit it was given on. Nothing dismisses a
+          # stale one here — dismiss_stale_reviews_on_push is false, and the
+          # App bypasses the ruleset that carries it — so the workflow does it
+          # itself: approve, then push, and the PR is unapproved again.
+          approvers=$(printf '%s' "$latest" \
+            | jq -r --arg sha "$sha" '.[] | select(.state == "APPROVED" and .commit == $sha) | .login')
+
+          if [ -z "$approvers" ]; then
+            echo "PR #$n: no approval on the current head $sha — skipping."
+            exit 0
+          fi
+
+          # An approval only gates anything if the approver could have landed
+          # this themselves. `authorAssociation` on the review is too coarse
+          # to lean on — COLLABORATOR covers read- and triage-only access.
+          approved=false
+          for login in $approvers; do
+            perm=$(gh api "repos/$GH_REPO/collaborators/$login/permission" --jq '.permission') || perm=
+            case "$perm" in
+            admin | maintain | write)
+              echo "PR #$n: approved on $sha by $login ($perm)."
+              approved=true
+              break
+              ;;
             *)
-              echo "PR #$n: head '$head' is not a queue branch — skipping."
-              continue
+              echo "PR #$n: $login approved but has permission '${perm:-unreadable}' — not counted."
               ;;
             esac
-
-            # A draft PR is OPEN — `isDraft` is a separate field, and skipping it
-            # would land a queue branch its author has explicitly marked as not
-            # ready. Draft is the drain's way of saying "not yet".
-            if [ "$state" != "OPEN" ] || [ "$draft" != "false" ] || [ "$base" != "$INTEGRATION_BRANCH" ]; then
-              echo "PR #$n: state=$state draft=$draft base=$base — not a ready PR into $INTEGRATION_BRANCH, skipping."
-              continue
-            fi
-
-            # Green means every check, not just the required ones: the queue PR
-            # is the ONLY gate the drain's commits ever pass through.
-            if ! gh pr checks "$n"; then
-              echo "PR #$n: checks are not (yet) all green — skipping."
-              continue
-            fi
-
-            # THE HUMAN GATE. `reviewDecision` is deliberately not used: the
-            # merge-gate ruleset sets required_approving_review_count to 0, and
-            # GitHub reports reviewDecision as null wherever no review is
-            # required — however many approvals the PR actually carries. So the
-            # three things the platform would have checked are checked here:
-            # the latest review per author, the approval's freshness, and the
-            # approver's write access.
-            #
-            # --paginate emits one array per page, so `.[] | …` streams the
-            # reviews and `jq -s` collects them back into a single array.
-            reviews=$(gh api --paginate "repos/$GH_REPO/pulls/$n/reviews" \
-              --jq '.[] | {login: .user.login, state: .state, commit: .commit_id}' | jq -s '.')
-
-            # COMMENTED and DISMISSED reviews are dropped BEFORE the per-author
-            # reduction: a later comment must not clear an approval, and a
-            # dismissed review must not count as one. group_by is stable, so
-            # `last` is each author's most recent verdict.
-            latest=$(printf '%s' "$reviews" \
-              | jq -c '[.[] | select(.state == "APPROVED" or .state == "CHANGES_REQUESTED")]
-                       | group_by(.login) | map(last)')
-
-            if [ "$(printf '%s' "$latest" | jq -r '[.[] | select(.state == "CHANGES_REQUESTED")] | length')" != "0" ]; then
-              echo "PR #$n: changes are requested — skipping."
-              continue
-            fi
-
-            # An approval names the commit it was given on. Nothing dismisses a
-            # stale one here — dismiss_stale_reviews_on_push is false, and the
-            # App bypasses the ruleset that carries it — so the workflow does it
-            # itself: approve, then push, and the PR is unapproved again.
-            approvers=$(printf '%s' "$latest" \
-              | jq -r --arg sha "$sha" '.[] | select(.state == "APPROVED" and .commit == $sha) | .login')
-
-            if [ -z "$approvers" ]; then
-              echo "PR #$n: no approval on the current head $sha — skipping."
-              continue
-            fi
-
-            # An approval only gates anything if the approver could have landed
-            # this themselves. `authorAssociation` on the review is too coarse
-            # to lean on — COLLABORATOR covers read- and triage-only access.
-            approved=false
-            for login in $approvers; do
-              perm=$(gh api "repos/$GH_REPO/collaborators/$login/permission" --jq '.permission') || perm=
-              case "$perm" in
-              admin | maintain | write)
-                echo "PR #$n: approved on $sha by $login ($perm)."
-                approved=true
-                break
-                ;;
-              *)
-                echo "PR #$n: $login approved but has permission '${perm:-unreadable}' — not counted."
-                ;;
-              esac
-            done
-
-            if [ "$approved" != "true" ]; then
-              echo "PR #$n: no approval from anyone with write access — skipping."
-              continue
-            fi
-
-            # THE HEAD MUST NOT HAVE MOVED. `gh pr checks` reads the PR's
-            # CURRENT head, while the approval and the landing are bound to
-            # $sha, read above: a push between the two would let green checks
-            # on the new head vouch for an old commit nobody ran them on.
-            now=$(gh pr view "$n" --json headRefOid --jq '.headRefOid')
-            if [ "$now" != "$sha" ]; then
-              echo "PR #$n: head moved from $sha to $now while it was checked — skipping."
-              continue
-            fi
-
-            echo "pr=$n" >> "$GITHUB_OUTPUT"
-            echo "sha=$sha" >> "$GITHUB_OUTPUT"
-            echo "PR #$n: green, approved queue PR $head -> $base at $sha."
-            break
           done
+
+          if [ "$approved" != "true" ]; then
+            echo "PR #$n: no approval from anyone with write access — skipping."
+            exit 0
+          fi
+
+          # THE HEAD MUST NOT HAVE MOVED. `gh pr checks` reads the PR's
+          # CURRENT head, while the approval and the landing are bound to
+          # $sha, read above: a push between the two would let green checks
+          # on the new head vouch for an old commit nobody ran them on.
+          now=$(gh pr view "$n" --json headRefOid --jq '.headRefOid')
+          if [ "$now" != "$sha" ]; then
+            echo "PR #$n: head moved from $sha to $now while it was checked — skipping."
+            exit 0
+          fi
+
+          echo "pr=$n" >> "$GITHUB_OUTPUT"
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          echo "PR #$n: green, approved queue PR $head -> $base at $sha."
 
   # No `environment:` — see the header. The gate is the approval `pick` verified,
   # and it is pinned to a SHA: this job fast-forwards onto the exact commit that

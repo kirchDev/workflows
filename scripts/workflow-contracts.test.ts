@@ -808,3 +808,360 @@ test('recording writes one status per named area and refuses malformed input', (
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+// A stand-in for `gh` that answers from fixture files the way the real one
+// does: `--paginate` reads every page (`<name>.json`, `<name>.2.json`), a page
+// read without it stops at the first, `--jq` runs per page, and `<name>.fail`
+// turns the call into an error with no JSON on stdout.
+const FAKE_GH = [
+  '#!/usr/bin/env bash',
+  'set -euo pipefail',
+  'echo "$*" >> "$FAKE/calls"',
+  'jqexpr=',
+  'paginate=false',
+  'args=()',
+  'while [ $# -gt 0 ]; do',
+  '  case "$1" in',
+  '  --jq) jqexpr=$2; shift 2 ;;',
+  '  --paginate) paginate=true; shift ;;',
+  '  *) args+=("$1"); shift ;;',
+  '  esac',
+  'done',
+  'respond() {',
+  '  if [ -e "$FAKE/$1.fail" ]; then echo "HTTP 502: Bad Gateway" >&2; exit 1; fi',
+  '  pages=("$FAKE/$1.json")',
+  '  if [ "$paginate" = true ] && [ -e "$FAKE/$1.2.json" ]; then pages+=("$FAKE/$1.2.json"); fi',
+  '  for page in "${pages[@]}"; do',
+  '    if [ -n "$jqexpr" ]; then jq -r "$jqexpr" "$page"; else cat "$page"; fi',
+  '  done',
+  '  exit "$(cat "$FAKE/$1.exit" 2>/dev/null || echo 0)"',
+  '}',
+  'case "${args[*]}" in',
+  '"api repos/o/r/pulls?"*) respond pulls ;;',
+  '"api repos/o/r/pulls/"*"/reviews") respond reviews ;;',
+  '"api repos/o/r/rules/branches/"*) respond rules ;;',
+  '"api repos/o/r/branches/"*) respond branch ;;',
+  '"api repos/o/r/git/ref/heads/"*) respond tip ;;',
+  '"api repos/o/r/collaborators/"*) respond permission ;;',
+  '"pr view "*) respond view ;;',
+  '"pr checks "*) respond checks ;;',
+  '*) echo "unexpected gh call: $*" >&2; exit 2 ;;',
+  'esac',
+  ''
+].join('\n');
+
+function queueStep(
+  file: string,
+  name: string,
+  fixtures: Record<string, unknown>,
+  env: Record<string, string> = {}
+) {
+  const root = mkdtempSync(join(tmpdir(), 'workflow-queue-'));
+  const output = join(root, 'output');
+  writeFileSync(output, '');
+  writeFileSync(join(root, 'calls'), '');
+  writeFileSync(join(root, 'gh'), FAKE_GH, { mode: 0o755 });
+  for (const [key, value] of Object.entries(fixtures)) {
+    if (value === undefined) continue;
+    if (key.endsWith('.fail')) writeFileSync(join(root, key), '');
+    else if (key.endsWith('.exit'))
+      writeFileSync(join(root, key), String(value));
+    else writeFileSync(join(root, `${key}.json`), JSON.stringify(value));
+  }
+  try {
+    const run = spawnSync('bash', ['-c', script(name, file)], {
+      env: {
+        ...process.env,
+        PATH: `${root}:${process.env.PATH}`,
+        FAKE: root,
+        GH_REPO: 'o/r',
+        QUEUE_BRANCH_PREFIX: 'ai/queue-',
+        INTEGRATION_BRANCH: 'dev',
+        GITHUB_OUTPUT: output,
+        ...env
+      },
+      encoding: 'utf8'
+    });
+    return {
+      status: run.status,
+      log: run.stdout + run.stderr,
+      output: readFileSync(output, 'utf8').trim(),
+      calls: readFileSync(join(root, 'calls'), 'utf8')
+    };
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+}
+
+const pull = (number: number, ref: string, repo: string | null = 'o/r') => ({
+  number,
+  head: { ref, repo: repo === null ? null : { full_name: repo } }
+});
+
+test('the queue branch is found on any page, only in this repository, and two stop the cut', () => {
+  const tip = 'abcdef0123456789abcdef0123456789abcdef01';
+  const step = (fixtures: Record<string, unknown>) =>
+    queueStep(
+      '_queue-branch.yml',
+      'Is a queue branch already open?',
+      { tip: { object: { sha: tip } }, ...fixtures },
+      { PR: '5' }
+    );
+
+  const none = step({ pulls: [pull(4, 'ai/queue/inf-1-worker')] });
+  assert.equal(none.status, 0, none.log);
+  assert.equal(none.output, `branch=ai/queue-abcdef0\nsha=${tip}\ncreate=true`);
+
+  const one = step({ pulls: [pull(3, 'ai/queue-1111111')] });
+  assert.equal(one.status, 0, one.log);
+  assert.equal(one.output, 'branch=ai/queue-1111111\ncreate=false');
+
+  const two = step({
+    pulls: [pull(3, 'ai/queue-1111111'), pull(8, 'ai/queue-2222222')]
+  });
+  assert.equal(two.status, 1);
+  assert.equal(two.output, '');
+  assert.match(two.log, /::error::2 queue PRs are open into dev/);
+
+  const fork = step({
+    pulls: [
+      pull(3, 'ai/queue-2222222', 'fork/r'),
+      pull(6, 'ai/queue-3333333', null)
+    ]
+  });
+  assert.equal(fork.status, 0, fork.log);
+  assert.match(fork.output, /create=true$/);
+
+  const pageTwo = step({
+    pulls: [pull(1, 'feat/a')],
+    'pulls.2': [pull(150, 'ai/queue-4444444')]
+  });
+  assert.equal(pageTwo.status, 0, pageTwo.log);
+  assert.equal(pageTwo.output, 'branch=ai/queue-4444444\ncreate=false');
+
+  const failed = step({ 'pulls.fail': true });
+  assert.equal(failed.status, 1);
+  assert.equal(failed.output, '');
+  assert.match(failed.log, /::error::Could not list/);
+});
+
+test("the queue PR is opened unless this repository's branch already has one", () => {
+  const step = (fixtures: Record<string, unknown>) =>
+    queueStep(
+      '_fast-forward-queue.yml',
+      'Is a queue PR already open?',
+      fixtures,
+      { BRANCH: 'ai/queue-1111111' }
+    );
+
+  const own = step({ pulls: [pull(3, 'ai/queue-1111111')] });
+  assert.equal(own.status, 0, own.log);
+  assert.equal(own.output, 'create=false');
+  assert.match(own.calls, /head=o:ai\/queue-1111111/);
+
+  const fork = step({ pulls: [pull(3, 'ai/queue-1111111', 'fork/r')] });
+  assert.equal(fork.status, 0, fork.log);
+  assert.equal(fork.output, 'create=true');
+
+  const failed = step({ 'pulls.fail': true });
+  assert.equal(failed.status, 1);
+  assert.equal(failed.output, '');
+});
+
+const HEAD = 'c'.repeat(40);
+const row = (name: string, bucket: string, event = 'pull_request') => ({
+  name,
+  bucket,
+  event,
+  workflow: event ? name.split(' / ')[0] : ''
+});
+const required = (...contexts: string[]) => ({
+  type: 'required_status_checks',
+  parameters: {
+    required_status_checks: contexts.map((context) => ({ context }))
+  }
+});
+const landable = {
+  pulls: [pull(7, 'ai/queue-abc1234')],
+  view: {
+    number: 7,
+    state: 'OPEN',
+    isDraft: false,
+    baseRefName: 'dev',
+    headRefName: 'ai/queue-abc1234',
+    headRefOid: HEAD,
+    isCrossRepository: false,
+    statusCheckRollup: [{}]
+  },
+  rules: [{ type: 'deletion' }, required('CI / Gate')],
+  branch: { protection: { required_status_checks: { contexts: [] } } },
+  checks: [row('CI / Gate', 'pass')],
+  reviews: [
+    { user: { login: 'maintainer' }, state: 'APPROVED', commit_id: HEAD }
+  ],
+  permission: { permission: 'admin' }
+};
+const pick = (
+  fixtures: Record<string, unknown> = {},
+  env: Record<string, string> = {}
+) =>
+  queueStep(
+    '_fast-forward-queue.yml',
+    'Pick the queue PR',
+    { ...landable, ...fixtures },
+    { INPUT_PR: '', ...env }
+  );
+
+test('the landing considers exactly one queue PR of this repository, on any page', () => {
+  const one = pick();
+  assert.equal(one.status, 0, one.log);
+  assert.equal(one.output, `pr=7\nsha=${HEAD}`);
+
+  const none = pick({ pulls: [pull(4, 'ai/queue/inf-1-worker')] });
+  assert.equal(none.status, 0, none.log);
+  assert.equal(none.output, '');
+  assert.match(none.log, /nothing to do/);
+
+  const two = pick({
+    pulls: [pull(7, 'ai/queue-abc1234'), pull(9, 'ai/queue-def5678')]
+  });
+  assert.equal(two.status, 1);
+  assert.equal(two.output, '');
+  assert.match(
+    two.log,
+    /::error::2 queue PRs are open into dev \(#7 ai\/queue-abc1234,#9 ai\/queue-def5678\)/
+  );
+
+  const fork = pick({
+    pulls: [pull(5, 'ai/queue-abc1234', 'fork/r'), pull(7, 'ai/queue-abc1234')]
+  });
+  assert.equal(fork.output, `pr=7\nsha=${HEAD}`, fork.log);
+  assert.equal(
+    pick({ pulls: [pull(5, 'ai/queue-abc1234', 'fork/r')] }).output,
+    ''
+  );
+
+  const pageTwo = pick({
+    pulls: [pull(1, 'feat/a'), pull(2, 'ai/queue/inf-2-worker')],
+    'pulls.2': [pull(150, 'ai/queue-abc1234')]
+  });
+  assert.equal(pageTwo.status, 0, pageTwo.log);
+  assert.equal(pageTwo.output, `pr=150\nsha=${HEAD}`);
+
+  const failed = pick({ 'pulls.fail': true });
+  assert.equal(failed.status, 1);
+  assert.equal(failed.output, '');
+  assert.match(failed.log, /::error::Could not list/);
+
+  // A dispatch names the PR, so two open queue PRs are no longer ambiguous —
+  // and nothing is listed at all.
+  const dispatched = pick(
+    { pulls: [pull(7, 'ai/queue-abc1234'), pull(9, 'ai/queue-def5678')] },
+    { INPUT_PR: '7' }
+  );
+  assert.equal(dispatched.output, `pr=7\nsha=${HEAD}`, dispatched.log);
+  assert.doesNotMatch(dispatched.calls, /pulls\?/);
+
+  const injected = pick({}, { INPUT_PR: '7\n::error::x' });
+  assert.equal(injected.status, 1);
+  assert.equal(injected.output, '');
+});
+
+test('the landing waits for every expected check from the PR itself and never lands on red', () => {
+  const lands = (fixtures: Record<string, unknown>) => {
+    const run = pick(fixtures);
+    assert.equal(run.status, 0, run.log);
+    assert.equal(run.output, `pr=7\nsha=${HEAD}`, run.log);
+  };
+  const waits = (fixtures: Record<string, unknown>, reason: RegExp) => {
+    const run = pick(fixtures);
+    assert.equal(run.status, 0, run.log);
+    assert.equal(run.output, '', run.log);
+    assert.match(run.log, reason);
+  };
+  const fails = (fixtures: Record<string, unknown>, reason: RegExp) => {
+    const run = pick(fixtures);
+    assert.equal(run.status, 1, run.log);
+    assert.equal(run.output, '');
+    assert.match(run.log, reason);
+  };
+
+  // A green, B not registered yet.
+  waits(
+    { rules: [required('CI / Gate', 'PHP / Gate')] },
+    /expected but not passed in this PR: PHP \/ Gate/
+  );
+  // A run that registers red later stops the landing, expected or not.
+  waits(
+    { checks: [row('CI / Gate', 'pass'), row('Lighthouse / summary', 'fail')] },
+    /red: Lighthouse \/ summary/
+  );
+  waits({ checks: [row('CI / Gate', 'cancel')] }, /red: CI \/ Gate/);
+  // Red CI without a draft gate is red, not "no checks".
+  waits({ checks: [row('CI / Gate', 'fail')] }, /red: CI \/ Gate/);
+  // The rows of a draft queue PR: its own Gate skipped, a push run green.
+  waits(
+    {
+      checks: [
+        row('CI / Gate', 'skipping'),
+        row('CI / Gate', 'pass', 'push'),
+        row('CI / Lint & Format', 'skipping')
+      ]
+    },
+    /expected but not passed in this PR: CI \/ Gate/
+  );
+  // A green push run alone is another context.
+  waits(
+    { checks: [row('CI / Gate', 'pass', 'push')] },
+    /expected but not passed in this PR: CI \/ Gate/
+  );
+  // `gh pr checks` signals pending with an exit code, not with missing JSON.
+  waits(
+    {
+      checks: [row('CI / Gate', 'pass'), row('CodeQL / Gate', 'pending')],
+      'checks.exit': 8
+    },
+    /pending: CodeQL \/ Gate/
+  );
+  // Nothing registered yet: gh errors, the rollup says empty.
+  waits(
+    { 'checks.fail': true, view: { ...landable.view, statusCheckRollup: [] } },
+    /expected but not passed in this PR: CI \/ Gate/
+  );
+
+  // A failed read is not "not green yet".
+  fails({ 'checks.fail': true }, /::error::Could not read the checks of PR #7/);
+  fails({ 'rules.fail': true }, /::error::Could not read the rules on dev/);
+  fails({ 'branch.fail': true }, /::error::Could not read the protection/);
+  // Without an expected check an unregistered one cannot be detected.
+  fails({ rules: [] }, /::error::No required status check applies to dev/);
+
+  // A commit status or another App's check has no event and counts as it reports.
+  lands({
+    rules: [required('CI / Gate', 'OpenTofu Plan')],
+    checks: [row('CI / Gate', 'pass'), row('OpenTofu Plan', 'pass', '')]
+  });
+  // A skipped check nobody requires is still fine, as is a push run beside the PR's.
+  lands({
+    checks: [
+      row('CI / Gate', 'pass'),
+      row('CI / Gate', 'pass', 'push'),
+      row('Queue Branch / Cut the queue branch', 'skipping')
+    ]
+  });
+  // Classic protection and duplicate rulesets name expected checks too.
+  lands({
+    rules: [],
+    branch: {
+      protection: { required_status_checks: { contexts: ['CI / Gate'] } }
+    }
+  });
+  lands({ rules: [required('CI / Gate'), required('CI / Gate')] });
+
+  // The earlier gates still hold.
+  waits({ reviews: [] }, /no approval on the current head/);
+  waits(
+    { view: { ...landable.view, isDraft: true } },
+    /not a ready PR into dev/
+  );
+});
