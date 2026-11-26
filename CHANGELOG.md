@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.19.3](https://github.com/kirchDev/workflows/compare/v0.19.2...v0.19.3) (2026-11-26)
+
+
+### Bug Fixes
+
+* **fast-forward-queue:** consider exactly one queue PR of this repository, on any page ([72b8fb0](https://github.com/kirchDev/workflows/commit/72b8fb0ea67e0690142a3d85b5fd15902263d390))
+* **fast-forward-queue:** land only once every required check passed in the PR's own run ([#96](https://github.com/kirchDev/workflows/issues/96)) ([72b8fb0](https://github.com/kirchDev/workflows/commit/72b8fb0ea67e0690142a3d85b5fd15902263d390))
+* **queue-branch:** find the open queue branch on every page and only in this repository ([72b8fb0](https://github.com/kirchDev/workflows/commit/72b8fb0ea67e0690142a3d85b5fd15902263d390))
+
 ## [0.19.2](https://github.com/kirchDev/workflows/compare/v0.19.1...v0.19.2) (2026-11-25)
 
 
