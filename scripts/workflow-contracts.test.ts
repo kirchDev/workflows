@@ -944,3 +944,125 @@ test('the queue branch is found on any page, only in this repository, and two st
   assert.equal(failed.output, '');
   assert.match(failed.log, /::error::Could not list/);
 });
+
+test("the queue PR is opened unless this repository's branch already has one", () => {
+  const step = (fixtures: Record<string, unknown>) =>
+    queueStep(
+      '_fast-forward-queue.yml',
+      'Is a queue PR already open?',
+      fixtures,
+      { BRANCH: 'ai/queue-1111111' }
+    );
+
+  const own = step({ pulls: [pull(3, 'ai/queue-1111111')] });
+  assert.equal(own.status, 0, own.log);
+  assert.equal(own.output, 'create=false');
+  assert.match(own.calls, /head=o:ai\/queue-1111111/);
+
+  const fork = step({ pulls: [pull(3, 'ai/queue-1111111', 'fork/r')] });
+  assert.equal(fork.status, 0, fork.log);
+  assert.equal(fork.output, 'create=true');
+
+  const failed = step({ 'pulls.fail': true });
+  assert.equal(failed.status, 1);
+  assert.equal(failed.output, '');
+});
+
+const HEAD = 'c'.repeat(40);
+const row = (name: string, bucket: string, event = 'pull_request') => ({
+  name,
+  bucket,
+  event,
+  workflow: event ? name.split(' / ')[0] : ''
+});
+const required = (...contexts: string[]) => ({
+  type: 'required_status_checks',
+  parameters: {
+    required_status_checks: contexts.map((context) => ({ context }))
+  }
+});
+const landable = {
+  pulls: [pull(7, 'ai/queue-abc1234')],
+  view: {
+    number: 7,
+    state: 'OPEN',
+    isDraft: false,
+    baseRefName: 'dev',
+    headRefName: 'ai/queue-abc1234',
+    headRefOid: HEAD,
+    isCrossRepository: false,
+    statusCheckRollup: [{}]
+  },
+  rules: [{ type: 'deletion' }, required('CI / Gate')],
+  branch: { protection: { required_status_checks: { contexts: [] } } },
+  checks: [row('CI / Gate', 'pass')],
+  reviews: [
+    { user: { login: 'maintainer' }, state: 'APPROVED', commit_id: HEAD }
+  ],
+  permission: { permission: 'admin' }
+};
+const pick = (
+  fixtures: Record<string, unknown> = {},
+  env: Record<string, string> = {}
+) =>
+  queueStep(
+    '_fast-forward-queue.yml',
+    'Pick the queue PR',
+    { ...landable, ...fixtures },
+    { INPUT_PR: '', ...env }
+  );
+
+test('the landing considers exactly one queue PR of this repository, on any page', () => {
+  const one = pick();
+  assert.equal(one.status, 0, one.log);
+  assert.equal(one.output, `pr=7\nsha=${HEAD}`);
+
+  const none = pick({ pulls: [pull(4, 'ai/queue/inf-1-worker')] });
+  assert.equal(none.status, 0, none.log);
+  assert.equal(none.output, '');
+  assert.match(none.log, /nothing to do/);
+
+  const two = pick({
+    pulls: [pull(7, 'ai/queue-abc1234'), pull(9, 'ai/queue-def5678')]
+  });
+  assert.equal(two.status, 1);
+  assert.equal(two.output, '');
+  assert.match(
+    two.log,
+    /::error::2 queue PRs are open into dev \(#7 ai\/queue-abc1234,#9 ai\/queue-def5678\)/
+  );
+
+  const fork = pick({
+    pulls: [pull(5, 'ai/queue-abc1234', 'fork/r'), pull(7, 'ai/queue-abc1234')]
+  });
+  assert.equal(fork.output, `pr=7\nsha=${HEAD}`, fork.log);
+  assert.equal(
+    pick({ pulls: [pull(5, 'ai/queue-abc1234', 'fork/r')] }).output,
+    ''
+  );
+
+  const pageTwo = pick({
+    pulls: [pull(1, 'feat/a'), pull(2, 'ai/queue/inf-2-worker')],
+    'pulls.2': [pull(150, 'ai/queue-abc1234')]
+  });
+  assert.equal(pageTwo.status, 0, pageTwo.log);
+  assert.equal(pageTwo.output, `pr=150\nsha=${HEAD}`);
+
+  const failed = pick({ 'pulls.fail': true });
+  assert.equal(failed.status, 1);
+  assert.equal(failed.output, '');
+  assert.match(failed.log, /::error::Could not list/);
+
+  // A dispatch names the PR, so two open queue PRs are no longer ambiguous —
+  // and nothing is listed at all.
+  const dispatched = pick(
+    { pulls: [pull(7, 'ai/queue-abc1234'), pull(9, 'ai/queue-def5678')] },
+    { INPUT_PR: '7' }
+  );
+  assert.equal(dispatched.output, `pr=7\nsha=${HEAD}`, dispatched.log);
+  assert.doesNotMatch(dispatched.calls, /pulls\?/);
+
+  const injected = pick({}, { INPUT_PR: '7\n::error::x' });
+  assert.equal(injected.status, 1);
+  assert.equal(injected.output, '');
+});
